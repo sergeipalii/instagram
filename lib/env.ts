@@ -19,8 +19,20 @@ export const env = {
   anthropicApiKey: () => required("ANTHROPIC_API_KEY"),
   claudeModel: () => optional("CLAUDE_MODEL", "claude-sonnet-4-6"),
 
-  upstashUrl: () => required("UPSTASH_REDIS_REST_URL"),
-  upstashToken: () => required("UPSTASH_REDIS_REST_TOKEN"),
+  // Vercel's Upstash integration injects KV_REST_API_* names; the standalone
+  // Upstash SDK convention is UPSTASH_REDIS_REST_*. Accept either.
+  upstashUrl: () =>
+    process.env.KV_REST_API_URL ??
+    process.env.UPSTASH_REDIS_REST_URL ??
+    (() => {
+      throw new Error("Missing KV_REST_API_URL / UPSTASH_REDIS_REST_URL");
+    })(),
+  upstashToken: () =>
+    process.env.KV_REST_API_TOKEN ??
+    process.env.UPSTASH_REDIS_REST_TOKEN ??
+    (() => {
+      throw new Error("Missing KV_REST_API_TOKEN / UPSTASH_REDIS_REST_TOKEN");
+    })(),
 
   localTokenSecret: () => required("LOCAL_TOKEN_SECRET"),
   cronSecret: () => optional("CRON_SECRET"),
