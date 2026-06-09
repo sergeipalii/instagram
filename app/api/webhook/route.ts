@@ -8,8 +8,15 @@ import {
   privateReplyToComment,
   hideComment,
 } from "@/lib/ig";
-import { generateReply, decideOnComment } from "@/lib/claude";
+import { generateReply, decideOnComment, type Escalation } from "@/lib/claude";
 import { sendAlert } from "@/lib/alert";
+
+const ESCALATION_LABEL: Record<Exclude<Escalation, "none">, string> = {
+  hot_lead: "🔥 Горячий лид",
+  complaint: "⚠️ Жалоба / негатив",
+  human_request: "🙋 Просят живого человека",
+  complex_commitment: "📝 Смета/сроки/договор — нужен ты",
+};
 
 export const runtime = "nodejs";
 
@@ -83,10 +90,15 @@ async function handleMessagingEvent(event: any): Promise<void> {
   const mid: string = message.mid ?? `${senderId}:${event.timestamp}`;
   if (await seenBefore(mid)) return;
 
-  const reply = await generateReply(text);
-  if (!reply) return; // SKIP (spam/off-topic)
+  const decision = await generateReply(text);
 
-  await sendMessage(senderId, reply);
+  if (decision.reply) await sendMessage(senderId, decision.reply);
+
+  if (decision.escalate !== "none") {
+    await sendAlert(
+      `${ESCALATION_LABEL[decision.escalate]} — DM\n\nОт id: ${senderId}\nСообщение:\n${text}\n\nМой ответ:\n${decision.reply ?? "—"}`,
+    );
+  }
 }
 
 async function handleCommentEvent(value: any): Promise<void> {
@@ -112,6 +124,9 @@ async function handleCommentEvent(value: any): Promise<void> {
     case "question_or_lead":
       if (decision.public_reply) await replyToComment(commentId, decision.public_reply);
       if (decision.dm_text) await privateReplyToComment(commentId, decision.dm_text);
+      await sendAlert(
+        `🔥 Горячий лид — комментарий\n\nОт id: ${fromId ?? "?"}\nКомментарий:\n${text}\n\nМой ответ в личку:\n${decision.dm_text ?? "—"}`,
+      );
       break;
     case "praise":
       if (decision.public_reply) await replyToComment(commentId, decision.public_reply);

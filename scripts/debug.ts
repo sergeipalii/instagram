@@ -23,13 +23,24 @@ loadEnv();
 
 type Mode = "dm" | "comment";
 
+const ESC_LABEL: Record<string, string> = {
+  none: "",
+  hot_lead: "🔥 hot_lead — пинг тебе",
+  complaint: "⚠️ complaint — пинг тебе",
+  human_request: "🙋 human_request — пинг тебе",
+  complex_commitment: "📝 complex_commitment — пинг тебе",
+};
+
 async function runDm(text: string, history: { role: "user" | "assistant"; text: string }[]) {
-  const reply = await generateReply(text, history);
+  const { reply, escalate } = await generateReply(text, history);
   if (reply === null) {
     console.log("\x1b[90m  → SKIP (спам / оффтоп, ответа нет)\x1b[0m");
-    return null;
+  } else {
+    console.log(`\x1b[32m  → ${reply}\x1b[0m`);
   }
-  console.log(`\x1b[32m  → ${reply}\x1b[0m`);
+  if (escalate !== "none") {
+    console.log(`\x1b[35m  escalate: ${ESC_LABEL[escalate]}\x1b[0m`);
+  }
   return reply;
 }
 

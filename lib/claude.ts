@@ -15,16 +15,54 @@ ${BRAND_FACTS}
 
 Ты отвечаешь на входящие личные сообщения (DM) в Instagram.
 - Коротко: 1–3 предложения. Это DM, не email.
-- Если сообщение — спам, бот или явно не по теме, верни ровно строку: SKIP`;
+- Если сообщение — спам, бот или явно не по теме, верни reply = null (ответа не будет).
+- Всегда отвечай по делу. Даже когда нужно подключить человека — дай полезный ответ (уточни задачу / предложи созвон), не обещая конкретных цифр.
+
+Помимо ответа определи, нужно ли подключить Сергея лично (escalate):
+- hot_lead — явный интерес к заказу, запрос сметы/КП, «хочу заказать».
+- complaint — недовольство, жалоба, проблема по текущей работе, негативный тон.
+- human_request — прямо просит живого человека / лично Сергея.
+- complex_commitment — требует конкретной сметы, сроков или договорных обязательств, где нельзя отвечать наобум.
+- none — обычный разговор, эскалация не нужна.
+Если подходит несколько — выбери самую важную (hot_lead важнее complex_commitment).`;
+
+export type Escalation =
+  | "none"
+  | "hot_lead"
+  | "complaint"
+  | "human_request"
+  | "complex_commitment";
+
+export interface DmDecision {
+  /** Reply text to send, or null to stay silent (spam/offtopic). */
+  reply: string | null;
+  escalate: Escalation;
+}
+
+const DM_TOOL: Anthropic.Tool = {
+  name: "dm_reply",
+  description: "Draft the DM reply and flag whether to escalate to the owner.",
+  input_schema: {
+    type: "object",
+    properties: {
+      reply: { type: ["string", "null"], description: "Reply text, or null to stay silent." },
+      escalate: {
+        type: "string",
+        enum: ["none", "hot_lead", "complaint", "human_request", "complex_commitment"],
+      },
+    },
+    required: ["reply", "escalate"],
+  },
+};
 
 /**
- * Generate a DM reply. Returns null if the model decides the message should be
- * skipped (spam / off-topic) so the webhook stays silent.
+ * Generate a DM reply and an escalation flag in one call. reply is null when
+ * the message should be ignored (spam / off-topic).
  */
 export async function generateReply(
   userMessage: string,
   history: { role: "user" | "assistant"; text: string }[] = [],
-): Promise<string | null> {
+): Promise<DmDecision> {
   const messages = [
     ...history.map((h) => ({ role: h.role, content: h.text })),
     { role: "user" as const, content: userMessage },
@@ -32,19 +70,20 @@ export async function generateReply(
 
   const res = await client().messages.create({
     model: env.claudeModel(),
-    max_tokens: 400,
+    max_tokens: 500,
     system: SYSTEM_PROMPT,
+    tools: [DM_TOOL],
+    tool_choice: { type: "tool", name: "dm_reply" },
     messages,
   });
 
-  const text = res.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("")
-    .trim();
-
-  if (!text || text === "SKIP") return null;
-  return text;
+  const toolUse = res.content.find(
+    (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
+  );
+  if (!toolUse) return { reply: null, escalate: "none" };
+  const out = toolUse.input as { reply: string | null; escalate: Escalation };
+  const reply = out.reply && out.reply.trim() ? out.reply.trim() : null;
+  return { reply, escalate: out.escalate ?? "none" };
 }
 
 // ─── Comment classification + drafting ───────────────────────────────────────
