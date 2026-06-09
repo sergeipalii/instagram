@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "publish:ig": "tsx scripts/publish.ts",
-    "token:check": "tsx scripts/token-check.ts"
+    "token:check": "tsx scripts/token-check.ts",
+    "debug": "tsx scripts/debug.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.69.0",
