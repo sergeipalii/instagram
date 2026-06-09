@@ -1,28 +1,24 @@
 import { env } from "./env";
 
 /**
- * Email alert to the owner (used for prohibited/threatening comments that a
- * human should review). No-op with a warning if Resend isn't configured.
+ * Telegram alert to the owner (used for prohibited/threatening comments that a
+ * human should review). No-op with a warning if the bot isn't configured.
  */
-export async function sendAlert(subject: string, body: string): Promise<void> {
-  const apiKey = env.resendApiKey();
-  const to = env.alertEmail();
-  if (!apiKey || !to) {
-    console.warn("sendAlert skipped: RESEND_API_KEY/ALERT_EMAIL not set", { subject });
+export async function sendAlert(text: string): Promise<void> {
+  const token = env.telegramBotToken();
+  const chatId = env.telegramChatId();
+  if (!token || !chatId) {
+    console.warn("sendAlert skipped: TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set");
     return;
   }
 
-  const res = await fetch("https://api.resend.com/emails", {
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      from: "Sepia IG <onboarding@resend.dev>",
-      to: [to],
-      subject,
-      text: body,
+      chat_id: chatId,
+      text,
+      disable_web_page_preview: true,
     }),
   });
   if (!res.ok) {

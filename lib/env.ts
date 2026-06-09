@@ -37,8 +37,8 @@ export const env = {
   localTokenSecret: () => required("LOCAL_TOKEN_SECRET"),
   cronSecret: () => optional("CRON_SECRET"),
 
-  resendApiKey: () => optional("RESEND_API_KEY"),
-  alertEmail: () => optional("ALERT_EMAIL"),
+  telegramBotToken: () => optional("TELEGRAM_BOT_TOKEN"),
+  telegramChatId: () => optional("TELEGRAM_CHAT_ID"),
 };
 
 /** Graph API version used across the app. */

@@ -123,8 +123,7 @@ async function handleCommentEvent(value: any): Promise<void> {
     case "prohibited":
       await hideComment(commentId);
       await sendAlert(
-        "⚠️ Instagram: скрыт запрещённый комментарий",
-        `Скрыт комментарий, требующий твоего внимания.\n\nТекст:\n${text}\n\nАвтор id: ${fromId ?? "?"}\nComment id: ${commentId}`,
+        `⚠️ Instagram: скрыт запрещённый комментарий\n\nТекст:\n${text}\n\nАвтор id: ${fromId ?? "?"}\nComment id: ${commentId}`,
       );
       break;
     case "offtopic":
