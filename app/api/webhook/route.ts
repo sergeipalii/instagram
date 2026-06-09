@@ -2,8 +2,14 @@ import { NextRequest } from "next/server";
 import crypto from "crypto";
 import { env } from "@/lib/env";
 import { seenBefore } from "@/lib/store";
-import { sendMessage } from "@/lib/ig";
-import { generateReply } from "@/lib/claude";
+import {
+  sendMessage,
+  replyToComment,
+  privateReplyToComment,
+  hideComment,
+} from "@/lib/ig";
+import { generateReply, decideOnComment } from "@/lib/claude";
+import { sendAlert } from "@/lib/alert";
 
 export const runtime = "nodejs";
 
@@ -48,6 +54,9 @@ export async function POST(req: NextRequest) {
         for (const event of entry.messaging ?? []) {
           await handleMessagingEvent(event);
         }
+        for (const change of entry.changes ?? []) {
+          if (change.field === "comments") await handleCommentEvent(change.value);
+        }
       }
     }
   } catch (err) {
@@ -78,4 +87,48 @@ async function handleMessagingEvent(event: any): Promise<void> {
   if (!reply) return; // SKIP (spam/off-topic)
 
   await sendMessage(senderId, reply);
+}
+
+async function handleCommentEvent(value: any): Promise<void> {
+  const commentId: string | undefined = value?.id;
+  const text: string | undefined = value?.text;
+  const fromId: string | undefined = value?.from?.id;
+  if (!commentId || !text) return;
+
+  // Loop guards:
+  // - skip our own comments/replies (would otherwise trigger ourselves)
+  // - skip replies (parent_id present): only act on top-level comments. This
+  //   also means our public replies never trigger a cascade.
+  if (fromId && fromId === env.igUserId()) return;
+  if (value.parent_id) return;
+
+  // Dedup: Meta can redeliver the same change.
+  if (await seenBefore(`comment:${commentId}`)) return;
+
+  const decision = await decideOnComment(text);
+  if (!decision) return;
+
+  switch (decision.category) {
+    case "question_or_lead":
+      if (decision.public_reply) await replyToComment(commentId, decision.public_reply);
+      if (decision.dm_text) await privateReplyToComment(commentId, decision.dm_text);
+      break;
+    case "praise":
+      if (decision.public_reply) await replyToComment(commentId, decision.public_reply);
+      break;
+    case "spam":
+    case "toxic":
+      await hideComment(commentId);
+      break;
+    case "prohibited":
+      await hideComment(commentId);
+      await sendAlert(
+        "⚠️ Instagram: скрыт запрещённый комментарий",
+        `Скрыт комментарий, требующий твоего внимания.\n\nТекст:\n${text}\n\nАвтор id: ${fromId ?? "?"}\nComment id: ${commentId}`,
+      );
+      break;
+    case "offtopic":
+    default:
+      break;
+  }
 }

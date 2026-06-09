@@ -46,6 +46,33 @@ export async function sendMessage(recipientId: string, text: string): Promise<vo
   });
 }
 
+// ─── Comments ────────────────────────────────────────────────────────────────
+
+/** Public reply in the comment thread. */
+export async function replyToComment(commentId: string, text: string): Promise<void> {
+  const token = await getToken();
+  await igPost(`${commentId}/replies`, { message: text, access_token: token });
+}
+
+/**
+ * Private reply: send a DM to the comment's author. Meta allows this ONCE per
+ * top-level comment. recipient is addressed by comment_id, not user id.
+ */
+export async function privateReplyToComment(commentId: string, text: string): Promise<void> {
+  const token = await getToken();
+  await igPost(`${env.igUserId()}/messages`, {
+    recipient: JSON.stringify({ comment_id: commentId }),
+    message: JSON.stringify({ text }),
+    access_token: token,
+  });
+}
+
+/** Hide a comment from public view (moderation). */
+export async function hideComment(commentId: string): Promise<void> {
+  const token = await getToken();
+  await igPost(commentId, { hide: "true", access_token: token });
+}
+
 // ─── Publishing (used by the local script via direct calls) ──────────────────
 // These take userId explicitly so the local script can pass the id it got from
 // /api/token, without needing IG_USER_ID in its own env.
