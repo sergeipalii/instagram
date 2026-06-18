@@ -1,0 +1,6 @@
+file '/home/sergei/storage/Development/My/sepia.software/instagram/assets/scene-vibecoder/_build/seg-01.mp4'
+file '/home/sergei/storage/Development/My/sepia.software/instagram/assets/scene-vibecoder/_build/seg-02.mp4'
+file '/home/sergei/storage/Development/My/sepia.software/instagram/assets/scene-vibecoder/_build/seg-03.mp4'
+file '/home/sergei/storage/Development/My/sepia.software/instagram/assets/scene-vibecoder/_build/seg-04.mp4'
+file '/home/sergei/storage/Development/My/sepia.software/instagram/assets/scene-vibecoder/_build/seg-05.mp4'
+file '/home/sergei/storage/Development/My/sepia.software/instagram/assets/scene-vibecoder/_build/seg-06.mp4'

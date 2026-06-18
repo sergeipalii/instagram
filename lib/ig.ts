@@ -36,6 +36,16 @@ export async function refreshToken(): Promise<{ token: string; expiresIn: number
   return { token: json.access_token, expiresIn: json.expires_in };
 }
 
+/** Current follower & media counts for the connected account. */
+export async function getAccountStats(): Promise<{ followers: number; media: number }> {
+  const token = await getToken();
+  const json = await igGet(`${GRAPH_VERSION}/${env.igUserId()}`, {
+    fields: "followers_count,media_count",
+    access_token: token,
+  });
+  return { followers: json.followers_count ?? 0, media: json.media_count ?? 0 };
+}
+
 /** Send a text DM reply to a user (within the 24-hour messaging window). */
 export async function sendMessage(recipientId: string, text: string): Promise<void> {
   const token = await getToken();
@@ -86,6 +96,43 @@ export async function createImageContainer(
 ): Promise<string> {
   const json = await igPost(`${userId}/media`, {
     image_url: imageUrl,
+    caption,
+    access_token: token,
+  });
+  return json.id;
+}
+
+/**
+ * Create a single carousel child (image). Returns the child container id.
+ * Children are created with is_carousel_item=true, then bundled by
+ * createCarouselContainer.
+ */
+export async function createCarouselImageChild(
+  token: string,
+  userId: string,
+  imageUrl: string,
+): Promise<string> {
+  const json = await igPost(`${userId}/media`, {
+    image_url: imageUrl,
+    is_carousel_item: "true",
+    access_token: token,
+  });
+  return json.id;
+}
+
+/**
+ * Bundle 2–10 child container ids into a carousel container. Returns the
+ * container id to publish. Caption goes on the carousel, not the children.
+ */
+export async function createCarouselContainer(
+  token: string,
+  userId: string,
+  childIds: string[],
+  caption: string,
+): Promise<string> {
+  const json = await igPost(`${userId}/media`, {
+    media_type: "CAROUSEL",
+    children: childIds.join(","),
     caption,
     access_token: token,
   });

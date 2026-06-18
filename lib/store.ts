@@ -36,6 +36,17 @@ export async function tokenRefreshedAt(): Promise<string | null> {
   return redis().get<string>(TOKEN_REFRESHED_AT);
 }
 
+const FOLLOWERS_KEY = "ig:followers:last";
+
+/** Last recorded follower count (for the daily digest delta). null on first run. */
+export async function getLastFollowers(): Promise<number | null> {
+  return redis().get<number>(FOLLOWERS_KEY);
+}
+
+export async function setLastFollowers(count: number): Promise<void> {
+  await redis().set(FOLLOWERS_KEY, count);
+}
+
 /**
  * Webhook dedup: Meta may redeliver the same event. Returns true if this id
  * was already seen (so the caller can skip it). TTL keeps the set bounded.

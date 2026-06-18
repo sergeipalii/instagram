@@ -8,15 +8,25 @@
     "start": "next start",
     "lint": "eslint",
     "publish:ig": "tsx scripts/publish.ts",
+    "gen:image": "tsx scripts/gen-image.ts",
+    "render:carousel": "tsx scripts/render-carousel.ts",
+    "dump:texts": "tsx scripts/dump-texts.ts",
+    "gen:video": "tsx scripts/gen-video.ts",
+    "to:vertical": "tsx scripts/to-vertical.ts",
+    "build:reel": "tsx scripts/build-reel.ts",
     "token:check": "tsx scripts/token-check.ts",
-    "debug": "tsx scripts/debug.ts"
+    "debug": "tsx scripts/debug.ts",
+    "chroma": "tsx scripts/chroma-key.ts",
+    "publish:carousel": "tsx scripts/publish-carousel.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.69.0",
+    "@resvg/resvg-js": "^2.6.2",
     "@upstash/redis": "^1.35.0",
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "satori": "^0.26.0"
   },
   "devDependencies": {
     "@types/node": "^20",

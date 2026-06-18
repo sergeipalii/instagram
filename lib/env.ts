@@ -19,6 +19,13 @@ export const env = {
   anthropicApiKey: () => required("ANTHROPIC_API_KEY"),
   claudeModel: () => optional("CLAUDE_MODEL", "claude-sonnet-4-6"),
 
+  // Google Gemini image/video (Nano Banana). One key covers both.
+  nanoBananaKey: () => required("NANO_BANANA_KEY"),
+  geminiImageModel: () => optional("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image"),
+
+  // fal.ai — video generation (ByteDance Seedance 2.0, Kling, etc.).
+  falApiKey: () => required("FAL_API_KEY"),
+
   // Vercel's Upstash integration injects KV_REST_API_* names; the standalone
   // Upstash SDK convention is UPSTASH_REDIS_REST_*. Accept either.
   upstashUrl: () =>

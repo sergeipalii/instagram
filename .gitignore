@@ -6,3 +6,6 @@ node_modules/
 next-env.d.ts
 .DS_Store
 .vercel
+
+# generated publish artifacts
+assets/posts/*/.publish/
