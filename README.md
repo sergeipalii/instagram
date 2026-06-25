@@ -20,7 +20,7 @@ Meta App (Development Mode, твой аккаунт)
 ## Порядок запуска
 
 ### 1. Meta
-Пройди **[SETUP-META.md](./SETUP-META.md)** — приложение, Professional-аккаунт,
+Пройди **[docs/SETUP-META.md](./docs/SETUP-META.md)** — приложение, Professional-аккаунт,
 permissions, долгоживущий токен, IG User ID. Подписку вебхука сделаешь после
 деплоя (нужен публичный URL).
 
@@ -84,22 +84,43 @@ npm run debug
 Для комментариев печатается категория, выбранное действие и черновики
 public_reply / dm_text. Для DM — итоговый ответ (или SKIP).
 
-## Структура
+## Структура репозитория
+
+Корень держим чистым: только README, TODO и конфиги тулинга (next/ts/drizzle/
+postcss/vercel, proxy.ts, instrumentation.ts). Всё остальное разнесено:
 
 ```
-app/api/webhook/            входящие DM → Claude → ответ
-app/api/token/              отдаёт токен локалке (Bearer LOCAL_TOKEN_SECRET)
-app/api/cron/refresh-token/ авто-рефреш токена (Vercel Cron, см. vercel.json)
-lib/ig.ts                   Graph API: refresh, sendMessage, comments, publish*
-lib/claude.ts               генерация ответов (DM + классификация комментариев)
-lib/brand.ts                ★ контекст бренда (голос + факты) — правится здесь
-lib/alert.ts                Telegram-алерт о скрытой запрещёнке
-lib/store.ts                Upstash: токен, дедуп вебхуков
-scripts/debug.ts            локальная отладка ответов (без Instagram)
-scripts/publish.ts          локальная публикация с превью
-scripts/token-check.ts      проверка связки токена
-SETUP-META.md               настройка на стороне Meta
+app/                        Next.js (App Router)
+  (dashboard)/inbox/        полу-авто инбокс: список + действия (server actions)
+  login/                    страница входа
+  api/webhook/              входящие DM/комментарии → запись в Postgres
+  api/inbox/                фид инбокса + стрим генерации ответа
+  api/sync/                 бэкфилл DM/комментариев из Graph API
+  api/auth/                 логин/логаут (cookie-сессия)
+  api/token/                отдаёт IG-токен локалке (Bearer LOCAL_TOKEN_SECRET)
+  api/cron/                 авто-рефреш токена + дайджест (Vercel Cron)
+components/                 UI: ui/* (примитивы) + inbox/* (карточки/клиент)
+lib/
+  ig.ts                     Graph API: refresh, send, comments, publish*, reads
+  claude.ts                 генерация/классификация через AI SDK (OpenRouter)
+  models.ts                 реестр моделей + OpenRouter-провайдер
+  brand.ts                  ★ контекст бренда (голос + факты) — правится здесь
+  inbox.ts                  доступ к очереди (events/conversations)
+  sync.ts                   бэкфилл из Graph API
+  db/                       Drizzle: schema + клиент + миграции
+  store.ts                  Upstash: токен, follower-счётчик
+  auth.ts / net-ipv4.ts / alert.ts
+scripts/                    tsx-утилиты: debug, publish*, diag-inbox, db-migrate,
+                            token-check, gen/render*, и ad-hoc хелперы (_genposes.sh, _strips.cjs)
+docs/                       вся документация: SETUP-META, inbox, app-review,
+                            automation-plan, brand-brief, instagram-* и т.д.
+assets/                     исходники медиа (маскот, позы, посты, reels)
+proxy.ts                    защита дашборда (cookie-сессия), ex-middleware
+instrumentation.ts          старт-хук сервера (IPv4-фикс для Neon)
 ```
+
+Документация — в [docs/](docs/), оперативные задачи — в [TODO.md](TODO.md),
+описание продукта инбокса — в [docs/inbox.md](docs/inbox.md).
 
 ## Лимиты Meta (важно)
 - 25 публикаций / 24 ч (Reels и Stories в тот же лимит).
