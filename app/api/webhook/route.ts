@@ -1,7 +1,6 @@
 import { NextRequest } from "next/server";
 import crypto from "crypto";
 import { env } from "@/lib/env";
-import { seenBefore } from "@/lib/store";
 import {
   sendMessage,
   replyToComment,
@@ -10,6 +9,14 @@ import {
 } from "@/lib/ig";
 import { generateReply, decideOnComment, type Escalation } from "@/lib/claude";
 import { sendAlert } from "@/lib/alert";
+import {
+  getOrCreateAccount,
+  upsertConversation,
+  recordInbound,
+  recordOutbound,
+  setEventStatus,
+} from "@/lib/inbox";
+import type { Account } from "@/lib/db/schema";
 
 const ESCALATION_LABEL: Record<Exclude<Escalation, "none">, string> = {
   hot_lead: "🔥 Горячий лид",
@@ -57,12 +64,13 @@ export async function POST(req: NextRequest) {
   try {
     const body = JSON.parse(raw);
     if (body.object === "instagram") {
+      const account = await getOrCreateAccount(env.igUserId());
       for (const entry of body.entry ?? []) {
         for (const event of entry.messaging ?? []) {
-          await handleMessagingEvent(event);
+          await handleMessagingEvent(account, event);
         }
         for (const change of entry.changes ?? []) {
-          if (change.field === "comments") await handleCommentEvent(change.value);
+          if (change.field === "comments") await handleCommentEvent(account, change.value);
         }
       }
     }
@@ -73,59 +81,111 @@ export async function POST(req: NextRequest) {
   return new Response("EVENT_RECEIVED", { status: 200 });
 }
 
-async function handleMessagingEvent(event: any): Promise<void> {
+async function handleMessagingEvent(account: Account, event: any): Promise<void> {
   const senderId: string | undefined = event.sender?.id;
   const message = event.message;
   if (!senderId || !message) return;
 
   // Skip our own echoes and anything we sent.
   if (message.is_echo) return;
-  if (senderId === env.igUserId()) return;
+  if (senderId === account.igUserId) return;
 
-  // Only handle text for now (ignore reactions, attachments-only, etc.).
   const text: string | undefined = message.text;
-  if (!text) return;
+  const attachments = message.attachments;
+  // Need at least text or an attachment to make an inbox item worth showing.
+  if (!text && !attachments) return;
 
-  // Dedup: Meta can redeliver. mid is the stable message id.
   const mid: string = message.mid ?? `${senderId}:${event.timestamp}`;
-  if (await seenBefore(mid)) return;
 
-  const decision = await generateReply(text);
+  // DM thread is keyed by the sender (1:1 conversation).
+  const conversationId = await upsertConversation({
+    accountId: account.id,
+    kind: "dm",
+    externalId: senderId,
+    participantId: senderId,
+  });
 
-  if (decision.reply) await sendMessage(senderId, decision.reply);
+  const saved = await recordInbound({
+    conversationId,
+    externalId: mid,
+    author: senderId,
+    text,
+    attachments,
+    raw: event,
+  });
+  if (!saved) return; // duplicate delivery
 
+  if (!account.autoMode) {
+    await sendAlert(`🟣 Новый DM в инбоксе\n\nОт id: ${senderId}\n${text ?? "[вложение]"}`);
+    return;
+  }
+
+  // ── auto_mode: reply automatically (legacy behaviour, now opt-in) ──
+  if (!text) return;
+  const decision = await generateReply(text, [], account.defaultModel ?? undefined);
+  if (decision.reply) {
+    await sendMessage(senderId, decision.reply);
+    await recordOutbound({
+      conversationId,
+      externalId: `out:${mid}`,
+      text: decision.reply,
+      modelUsed: account.defaultModel ?? undefined,
+    });
+  }
+  await setEventStatus(saved.id, "auto", {
+    escalation: decision.escalate,
+    modelUsed: account.defaultModel ?? undefined,
+  });
   if (decision.escalate !== "none") {
     await sendAlert(
-      `${ESCALATION_LABEL[decision.escalate]} — DM\n\nОт id: ${senderId}\nСообщение:\n${text}\n\nМой ответ:\n${decision.reply ?? "—"}`,
+      `${ESCALATION_LABEL[decision.escalate]} — DM (авто)\n\nОт id: ${senderId}\nСообщение:\n${text}\n\nМой ответ:\n${decision.reply ?? "—"}`,
     );
   }
 }
 
-async function handleCommentEvent(value: any): Promise<void> {
+async function handleCommentEvent(account: Account, value: any): Promise<void> {
   const commentId: string | undefined = value?.id;
   const text: string | undefined = value?.text;
   const fromId: string | undefined = value?.from?.id;
+  const fromUsername: string | undefined = value?.from?.username;
+  const mediaId: string | undefined = value?.media?.id;
   if (!commentId || !text) return;
 
-  // Loop guards:
-  // - skip our own comments/replies (would otherwise trigger ourselves)
-  // - skip replies (parent_id present): only act on top-level comments. This
-  //   also means our public replies never trigger a cascade.
-  if (fromId && fromId === env.igUserId()) return;
+  // Loop guards: skip our own comments and replies (only top-level comments).
+  if (fromId && fromId === account.igUserId) return;
   if (value.parent_id) return;
 
-  // Dedup: Meta can redeliver the same change.
-  if (await seenBefore(`comment:${commentId}`)) return;
+  const conversationId = await upsertConversation({
+    accountId: account.id,
+    kind: "comment",
+    externalId: mediaId ?? commentId,
+    participantId: fromId,
+    participantUsername: fromUsername,
+  });
 
-  const decision = await decideOnComment(text);
+  const saved = await recordInbound({
+    conversationId,
+    externalId: commentId,
+    author: fromUsername ?? fromId,
+    text,
+    raw: value,
+  });
+  if (!saved) return;
+
+  if (!account.autoMode) {
+    await sendAlert(`🟣 Новый комментарий в инбоксе\n\nОт: ${fromUsername ?? fromId}\n${text}`);
+    return;
+  }
+
+  // ── auto_mode: classify + act automatically ──
+  const decision = await decideOnComment(text, account.defaultModel ?? undefined);
   if (!decision) return;
-
   switch (decision.category) {
     case "question_or_lead":
       if (decision.public_reply) await replyToComment(commentId, decision.public_reply);
       if (decision.dm_text) await privateReplyToComment(commentId, decision.dm_text);
       await sendAlert(
-        `🔥 Горячий лид — комментарий\n\nОт id: ${fromId ?? "?"}\nКомментарий:\n${text}\n\nМой ответ в личку:\n${decision.dm_text ?? "—"}`,
+        `🔥 Горячий лид — комментарий (авто)\n\nОт: ${fromUsername ?? fromId}\nКомментарий:\n${text}\n\nМой ответ в личку:\n${decision.dm_text ?? "—"}`,
       );
       break;
     case "praise":
@@ -138,11 +198,13 @@ async function handleCommentEvent(value: any): Promise<void> {
     case "prohibited":
       await hideComment(commentId);
       await sendAlert(
-        `⚠️ Instagram: скрыт запрещённый комментарий\n\nТекст:\n${text}\n\nАвтор id: ${fromId ?? "?"}\nComment id: ${commentId}`,
+        `⚠️ Скрыт запрещённый комментарий (авто)\n\nТекст:\n${text}\n\nАвтор: ${fromUsername ?? fromId}`,
       );
       break;
-    case "offtopic":
-    default:
-      break;
   }
+  const status = ["spam", "toxic", "prohibited"].includes(decision.category) ? "hidden" : "auto";
+  await setEventStatus(saved.id, status, {
+    category: decision.category,
+    modelUsed: account.defaultModel ?? undefined,
+  });
 }

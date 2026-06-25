@@ -19,6 +19,17 @@ export const env = {
   anthropicApiKey: () => required("ANTHROPIC_API_KEY"),
   claudeModel: () => optional("CLAUDE_MODEL", "claude-sonnet-4-6"),
 
+  // OpenRouter — single gateway for all reply models (default + UI choice).
+  openrouterKey: () => required("OPENROUTER_API_KEY"),
+  defaultModel: () => optional("DEFAULT_MODEL", "anthropic/claude-sonnet-4.6"),
+
+  // Postgres (Neon/Supabase) — inbox queue + history.
+  databaseUrl: () => required("DATABASE_URL"),
+
+  // Dashboard auth (single-user MVP): one password → signed cookie.
+  dashboardPassword: () => required("DASHBOARD_PASSWORD"),
+  authSecret: () => required("AUTH_SECRET"),
+
   // Google Gemini image/video (Nano Banana). One key covers both.
   nanoBananaKey: () => required("NANO_BANANA_KEY"),
   geminiImageModel: () => optional("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image"),

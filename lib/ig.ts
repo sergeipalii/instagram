@@ -56,6 +56,58 @@ export async function sendMessage(recipientId: string, text: string): Promise<vo
   });
 }
 
+// ─── Reads (used by the inbox backfill / sync) ───────────────────────────────
+
+/** Account profile basics. */
+export async function getMe(): Promise<{ user_id?: string; username?: string }> {
+  const token = await getToken();
+  return igGet(`${GRAPH_VERSION}/me`, { fields: "user_id,username", access_token: token });
+}
+
+/** DM conversations (Instagram platform). */
+export async function getConversations(): Promise<any[]> {
+  const token = await getToken();
+  const json = await igGet(`${GRAPH_VERSION}/${env.igUserId()}/conversations`, {
+    platform: "instagram",
+    fields: "id,updated_time,participants",
+    limit: "50",
+    access_token: token,
+  });
+  return json.data ?? [];
+}
+
+/** Messages within a conversation, newest-first as Meta returns them. */
+export async function getConversationMessages(conversationId: string): Promise<any[]> {
+  const token = await getToken();
+  const json = await igGet(`${GRAPH_VERSION}/${conversationId}`, {
+    fields: "messages{id,from,message,created_time}",
+    access_token: token,
+  });
+  return json.messages?.data ?? [];
+}
+
+/** Recent media for the account. */
+export async function getMediaList(): Promise<any[]> {
+  const token = await getToken();
+  const json = await igGet(`${GRAPH_VERSION}/${env.igUserId()}/media`, {
+    fields: "id,caption,timestamp,comments_count,permalink",
+    limit: "50",
+    access_token: token,
+  });
+  return json.data ?? [];
+}
+
+/** Comments on a media object. */
+export async function getMediaComments(mediaId: string): Promise<any[]> {
+  const token = await getToken();
+  const json = await igGet(`${GRAPH_VERSION}/${mediaId}/comments`, {
+    fields: "id,from,text,timestamp,hidden,parent_id",
+    limit: "50",
+    access_token: token,
+  });
+  return json.data ?? [];
+}
+
 // ─── Comments ────────────────────────────────────────────────────────────────
 
 /** Public reply in the comment thread. */

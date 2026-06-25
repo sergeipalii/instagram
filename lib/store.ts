@@ -12,11 +12,25 @@ function redis(): Redis {
 const TOKEN_KEY = "ig:token";
 const TOKEN_REFRESHED_AT = "ig:token:refreshed_at";
 
+/** True when Upstash is configured (Vercel). Local dev usually has neither. */
+function upstashConfigured(): boolean {
+  return Boolean(
+    (process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL) &&
+      (process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN),
+  );
+}
+
 /**
- * Current long-lived IG token. Vercel is the single source of truth.
- * Falls back to the seed env var if the store is empty (first run).
+ * Current long-lived IG token. Vercel (Upstash) is the single source of truth.
+ * When Upstash isn't configured (local dev) fall back straight to the env seed
+ * so scripts and the local server can call the Graph API.
  */
 export async function getToken(): Promise<string> {
+  if (!upstashConfigured()) {
+    const seed = env.igSeedToken();
+    if (seed) return seed;
+    throw new Error("No Upstash configured and no IG_LONG_LIVED_TOKEN seed set");
+  }
   const stored = await redis().get<string>(TOKEN_KEY);
   if (stored) return stored;
   const seed = env.igSeedToken();

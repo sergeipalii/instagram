@@ -1,5 +1,9 @@
 import fs from "fs";
 import path from "path";
+import { forceIpv4 } from "@/lib/net-ipv4";
+
+// Apply the IPv4 connect fix for every local script (Neon HTTP, etc.).
+forceIpv4();
 
 /**
  * Minimal .env loader for local scripts (Next loads env automatically, plain

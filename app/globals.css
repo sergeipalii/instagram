@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0a0a0f;
+  --color-surface: #14141c;
+  --color-surface-2: #1c1c28;
+  --color-border: #2a2a3a;
+  --color-fg: #e8e8f0;
+  --color-muted: #9090a8;
+  --color-accent: #6d5dfc;
+  --color-accent-2: #3ddc97;
+  --color-danger: #f0506e;
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+}
+
+/* Thin scrollbars to match the dark UI. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
