@@ -202,7 +202,7 @@ export async function createReelContainer(
     media_type: "REELS",
     video_url: videoUrl,
     // Show the Reel in the profile grid (9-squares tab), not just the Reels tab.
-    share_to_feed: true,
+    share_to_feed: "true",
     caption,
     access_token: token,
   });
