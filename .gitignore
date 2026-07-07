@@ -10,3 +10,5 @@ next-env.d.ts
 # generated publish artifacts
 assets/posts/*/.publish/
 .env*
+docs
+.playwright-mcp/
