@@ -4,6 +4,7 @@ import {
   uuid,
   text,
   boolean,
+  integer,
   timestamp,
   jsonb,
   uniqueIndex,
@@ -106,7 +107,31 @@ export const events = pgTable(
   ],
 );
 
+// ─── Webhook deliveries (raw audit log) ──────────────────────────────────────
+// One row per signature-valid webhook POST, captured UNCONDITIONALLY before any
+// typed handling. "Fix everything first, understand the fields later": whatever
+// Meta sends that passes the HMAC check leaves a trace here, even payloads the
+// typed handlers (events) don't recognise. Distinct from `events` (which is the
+// semantic inbox and needs a conversation); this is a pure firehose.
+export const webhookDeliveries = pgTable(
+  "webhook_deliveries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    // body.object (e.g. "instagram"); null when the body wasn't JSON.
+    object: text("object"),
+    // Parsed body, or { _unparseable: "<raw text>" } when JSON.parse failed.
+    raw: jsonb("raw").notNull(),
+    // How many items from this delivery were dispatched to a typed handler
+    // (messaging[] + comment changes[]) — 0 means "captured raw but nothing
+    // matched a handler" (e.g. the messages-as-changes Test, or other fields).
+    handledCount: integer("handled_count").notNull().default(0),
+  },
+  (t) => [index("webhook_deliveries_received").on(t.receivedAt)],
+);
+
 export type Account = typeof accounts.$inferSelect;
 export type Conversation = typeof conversations.$inferSelect;
 export type Event = typeof events.$inferSelect;
 export type NewEvent = typeof events.$inferInsert;
+export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;

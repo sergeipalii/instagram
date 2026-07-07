@@ -15,6 +15,8 @@ import {
   recordInbound,
   recordOutbound,
   setEventStatus,
+  recordDelivery,
+  setDeliveryHandledCount,
 } from "@/lib/inbox";
 import type { Account } from "@/lib/db/schema";
 
@@ -60,22 +62,53 @@ export async function POST(req: NextRequest) {
     return new Response("Invalid signature", { status: 401 });
   }
 
-  // Always 200 fast; do the work, but never let an error fail the delivery ack.
+  // Capture EVERY signature-valid delivery verbatim BEFORE any typed handling —
+  // even payloads no handler recognises (other fields, the messages-as-`changes`
+  // Test shape, malformed bodies). Fix everything first, parse fields later.
+  let parsed: any = null;
   try {
-    const body = JSON.parse(raw);
-    if (body.object === "instagram") {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = null; // not JSON — still logged below as _unparseable
+  }
+  let deliveryId: string | null = null;
+  try {
+    deliveryId = await recordDelivery({
+      object: typeof parsed?.object === "string" ? parsed.object : null,
+      raw: parsed ?? { _unparseable: raw },
+    });
+  } catch (err) {
+    console.error("webhook delivery-log error", err);
+  }
+
+  // Typed handling into the semantic inbox. Never let an error fail the ack.
+  let handled = 0;
+  try {
+    if (parsed?.object === "instagram") {
       const account = await getOrCreateAccount(env.igUserId());
-      for (const entry of body.entry ?? []) {
+      for (const entry of parsed.entry ?? []) {
         for (const event of entry.messaging ?? []) {
           await handleMessagingEvent(account, event);
+          handled++;
         }
         for (const change of entry.changes ?? []) {
-          if (change.field === "comments") await handleCommentEvent(account, change.value);
+          if (change.field === "comments") {
+            await handleCommentEvent(account, change.value);
+            handled++;
+          }
         }
       }
     }
   } catch (err) {
     console.error("webhook processing error", err);
+  }
+
+  if (deliveryId && handled > 0) {
+    try {
+      await setDeliveryHandledCount(deliveryId, handled);
+    } catch (err) {
+      console.error("webhook handled-count error", err);
+    }
   }
 
   return new Response("EVENT_RECEIVED", { status: 200 });

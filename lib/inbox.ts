@@ -4,10 +4,37 @@ import {
   accounts,
   conversations,
   events,
+  webhookDeliveries,
   type Account,
   type Conversation,
   type Event,
+  type WebhookDelivery,
 } from "./db/schema";
+
+// ─── Webhook deliveries (raw audit log) ──────────────────────────────────────
+
+/**
+ * Persist a signature-valid webhook POST verbatim, before any typed handling.
+ * Capture-everything-first: even payloads no handler recognises leave a trace.
+ * `object` is body.object (null if unparseable); `raw` is the parsed body, or
+ * `{ _unparseable: <text> }` when JSON.parse failed. Returns the row id so the
+ * caller can backfill handledCount after the typed handlers run.
+ */
+export async function recordDelivery(input: {
+  object: string | null;
+  raw: unknown;
+}): Promise<string | null> {
+  const [row] = await db
+    .insert(webhookDeliveries)
+    .values({ object: input.object, raw: input.raw ?? null })
+    .returning({ id: webhookDeliveries.id });
+  return row?.id ?? null;
+}
+
+/** Backfill how many typed items this delivery produced in `events`. */
+export async function setDeliveryHandledCount(id: string, count: number): Promise<void> {
+  await db.update(webhookDeliveries).set({ handledCount: count }).where(eq(webhookDeliveries.id, id));
+}
 
 // ─── Accounts ────────────────────────────────────────────────────────────────
 
