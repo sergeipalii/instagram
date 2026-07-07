@@ -49,7 +49,9 @@ export async function generateImage(
     responseModalities: ["TEXT", "IMAGE"],
   };
   if (opts.aspectRatio) {
-    generationConfig.responseFormat = { image: { aspectRatio: opts.aspectRatio } };
+    // Gemini 3 image models take the aspect ratio under imageConfig (plain
+    // "9:16" form); the older responseFormat.image enum rejects these strings.
+    generationConfig.imageConfig = { aspectRatio: opts.aspectRatio };
   }
 
   const res = await fetch(`${API_BASE}/${model}:generateContent`, {

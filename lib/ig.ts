@@ -201,6 +201,8 @@ export async function createReelContainer(
   const json = await igPost(`${userId}/media`, {
     media_type: "REELS",
     video_url: videoUrl,
+    // Show the Reel in the profile grid (9-squares tab), not just the Reels tab.
+    share_to_feed: true,
     caption,
     access_token: token,
   });

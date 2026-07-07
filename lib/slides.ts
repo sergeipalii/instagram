@@ -47,6 +47,12 @@ export interface SlideSpec {
    * px on the 1080×1350 canvas; file lives in assets/mascot-poses/.
    */
   screen?: { file: string; w: number; x: number; y: number };
+  /**
+   * App screenshot (pre-rendered with neon glow via `npm run prep:shot`),
+   * composited post-satori by render-carousel. file is relative to
+   * assets/posts/<id>/_shots/; x/y is the top-left on the 1080×1350 canvas.
+   */
+  shot?: { file: string; x: number; y: number };
 }
 
 const PAD = 96;

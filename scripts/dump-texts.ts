@@ -13,13 +13,14 @@ import { CAPTIONS } from "../content/captions";
 const META: Record<string, { title: string; status: string }> = {
   "01-intro": { title: "№1 · Знакомство", status: "опубликован · закреплён" },
   "02-myths": { title: "№2 · 5 мифов", status: "опубликован" },
+  "03-case-zen": { title: "№3 · Кейс Sepia Zen", status: "черновик · ждёт скрины+факты · 3-й pin" },
   "04-ai-vs-human": { title: "№4 · Что ИИ делает отлично / где нужен человек", status: "черновик" },
   "06-formats": { title: "№6 · Форматы работы", status: "опубликован · закреплён" },
   "12-audit-signs": { title: "№12 · 3 признака, что нужен аудит", status: "черновик" },
 };
 
 // Порядок вывода (по номеру поста).
-const ORDER = ["01-intro", "02-myths", "04-ai-vs-human", "06-formats", "12-audit-signs"];
+const ORDER = ["01-intro", "02-myths", "03-case-zen", "04-ai-vs-human", "06-formats", "12-audit-signs"];
 
 const out: string[] = [
   "# Тексты каруселей — для модерации",

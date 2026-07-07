@@ -21,7 +21,8 @@
     "publish:carousel": "tsx scripts/publish-carousel.ts",
     "diag:inbox": "tsx scripts/diag-inbox.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx scripts/db-migrate.ts"
+    "db:migrate": "tsx scripts/db-migrate.ts",
+    "gen:voice": "tsx scripts/gen-voice.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.69.0",

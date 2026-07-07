@@ -37,6 +37,14 @@ async function main() {
         .png()
         .toBuffer();
     }
+    // Composite a prepped app screenshot (rounded + neon glow) over the slide.
+    if (spec.shot) {
+      const ov = fs.readFileSync(path.join(outDir, "_shots", spec.shot.file));
+      png = await sharp(png)
+        .composite([{ input: ov, left: spec.shot.x, top: spec.shot.y }])
+        .png()
+        .toBuffer();
+    }
     const file = path.join(outDir, `${String(i + 1).padStart(2, "0")}.png`);
     fs.writeFileSync(file, png);
     console.log(`✅ ${file}`);

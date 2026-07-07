@@ -35,6 +35,11 @@ function flag(name: string): boolean {
 }
 
 async function fetchToken(): Promise<{ token: string; userId: string }> {
+  // Local fallback: if no Vercel base is configured, use the long-lived token
+  // and user id straight from the local env (.env.local seed).
+  if (!process.env.VERCEL_BASE_URL) {
+    return { token: need("IG_LONG_LIVED_TOKEN"), userId: need("IG_USER_ID") };
+  }
   const base = need("VERCEL_BASE_URL").replace(/\/$/, "");
   const secret = need("LOCAL_TOKEN_SECRET");
   const res = await fetch(`${base}/api/token`, {

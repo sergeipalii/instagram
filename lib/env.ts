@@ -37,6 +37,10 @@ export const env = {
   // fal.ai — video generation (ByteDance Seedance 2.0, Kling, etc.).
   falApiKey: () => required("FAL_API_KEY"),
 
+  // ElevenLabs — text-to-speech (mascot voice-over).
+  elevenLabsKey: () => required("ELEVENLABS_API_KEY"),
+  elevenLabsModel: () => optional("ELEVENLABS_MODEL", "eleven_v3"),
+
   // Vercel's Upstash integration injects KV_REST_API_* names; the standalone
   // Upstash SDK convention is UPSTASH_REDIS_REST_*. Accept either.
   upstashUrl: () =>
