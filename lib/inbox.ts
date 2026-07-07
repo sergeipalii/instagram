@@ -78,12 +78,16 @@ interface InboundInput {
   text?: string;
   attachments?: unknown;
   raw?: unknown;
+  /** Persist but keep out of the inbox (echo / our own / reply / empty). */
+  ignored?: boolean;
+  ignoredReason?: string;
 }
 
 /**
- * Record an inbound message/comment as a `new` inbox item. Idempotent: a
- * redelivered webhook (same externalId) is silently ignored. Returns the event,
- * or null if it was a duplicate.
+ * Record an inbound message/comment. Normally a `new` inbox item; pass
+ * `ignored` to persist it for observability while hiding it from the inbox
+ * (the read side filters `ignored = false`). Idempotent: a redelivered webhook
+ * (same externalId) is silently ignored. Returns the event, or null on dupe.
  */
 export async function recordInbound(input: InboundInput): Promise<Event | null> {
   const [row] = await db
@@ -97,6 +101,8 @@ export async function recordInbound(input: InboundInput): Promise<Event | null> 
       attachments: input.attachments ?? null,
       raw: input.raw ?? null,
       status: "new",
+      ignored: input.ignored ?? false,
+      ignoredReason: input.ignoredReason ?? null,
     })
     .onConflictDoNothing({ target: events.externalId })
     .returning();
@@ -139,7 +145,11 @@ export async function listInbox(opts?: {
   limit?: number;
 }): Promise<InboxItem[]> {
   const statuses = opts?.statuses ?? ["new"];
-  const conds = [eq(events.direction, "in"), inArray(events.status, statuses)];
+  const conds = [
+    eq(events.direction, "in"),
+    eq(events.ignored, false), // hide echo / our own / replies from the inbox
+    inArray(events.status, statuses),
+  ];
   if (opts?.kind) conds.push(eq(conversations.kind, opts.kind));
 
   const rows = await db
@@ -193,6 +203,8 @@ export async function inboxCount(): Promise<number> {
   const rows = await db
     .select({ id: events.id })
     .from(events)
-    .where(and(eq(events.direction, "in"), eq(events.status, "new")));
+    .where(
+      and(eq(events.direction, "in"), eq(events.ignored, false), eq(events.status, "new")),
+    );
   return rows.length;
 }

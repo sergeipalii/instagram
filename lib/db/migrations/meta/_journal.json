@@ -8,6 +8,13 @@
       "when": 1782199832342,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1783408337124,
+      "tag": "0001_faulty_black_cat",
+      "breakpoints": true
     }
   ]
 }

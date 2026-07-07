@@ -93,6 +93,11 @@ export const events = pgTable(
     handledAt: timestamp("handled_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     raw: jsonb("raw"),
+    // Recorded but excluded from the inbox at read time (echo / our own / reply /
+    // empty). Every signature-valid delivery leaves a DB trace; the inbox filters
+    // `ignored = false`, so validation + handling are observable without noise.
+    ignored: boolean("ignored").notNull().default(false),
+    ignoredReason: text("ignored_reason"),
   },
   (t) => [
     uniqueIndex("events_external_id").on(t.externalId),

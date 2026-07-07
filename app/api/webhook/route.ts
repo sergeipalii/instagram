@@ -84,25 +84,29 @@ export async function POST(req: NextRequest) {
 async function handleMessagingEvent(account: Account, event: any): Promise<void> {
   const senderId: string | undefined = event.sender?.id;
   const message = event.message;
-  if (!senderId || !message) return;
-
-  // Skip our own echoes and anything we sent.
-  if (message.is_echo) return;
-  if (senderId === account.igUserId) return;
+  if (!senderId || !message) return; // no ids/payload — nothing to record
 
   const text: string | undefined = message.text;
   const attachments = message.attachments;
-  // Need at least text or an attachment to make an inbox item worth showing.
-  if (!text && !attachments) return;
-
   const mid: string = message.mid ?? `${senderId}:${event.timestamp}`;
 
-  // DM thread is keyed by the sender (1:1 conversation).
+  // Record but keep out of the inbox: our own echoes, and content-less pings.
+  const fromUs = Boolean(message.is_echo) || senderId === account.igUserId;
+  const ignoredReason = fromUs
+    ? message.is_echo
+      ? "echo"
+      : "own_message"
+    : !text && !attachments
+      ? "no_content"
+      : undefined;
+
+  // DM thread keyed by the other party (the recipient when the echo is from us).
+  const participantId = fromUs ? (event.recipient?.id ?? senderId) : senderId;
   const conversationId = await upsertConversation({
     accountId: account.id,
     kind: "dm",
-    externalId: senderId,
-    participantId: senderId,
+    externalId: participantId,
+    participantId,
   });
 
   const saved = await recordInbound({
@@ -112,8 +116,11 @@ async function handleMessagingEvent(account: Account, event: any): Promise<void>
     text,
     attachments,
     raw: event,
+    ignored: Boolean(ignoredReason),
+    ignoredReason,
   });
   if (!saved) return; // duplicate delivery
+  if (ignoredReason) return; // recorded for observability; not an inbox item
 
   if (!account.autoMode) {
     await sendAlert(`🟣 Новый DM в инбоксе\n\nОт id: ${senderId}\n${text ?? "[вложение]"}`);
@@ -149,11 +156,17 @@ async function handleCommentEvent(account: Account, value: any): Promise<void> {
   const fromId: string | undefined = value?.from?.id;
   const fromUsername: string | undefined = value?.from?.username;
   const mediaId: string | undefined = value?.media?.id;
-  if (!commentId || !text) return;
+  if (!commentId) return; // no id — nothing to record
 
-  // Loop guards: skip our own comments and replies (only top-level comments).
-  if (fromId && fromId === account.igUserId) return;
-  if (value.parent_id) return;
+  // Record but keep out of the inbox: empty, our own comments, and replies
+  // (we only action top-level comments). Still leaves a DB trace of delivery.
+  const ignoredReason = !text
+    ? "no_text"
+    : fromId && fromId === account.igUserId
+      ? "own_comment"
+      : value.parent_id
+        ? "reply"
+        : undefined;
 
   const conversationId = await upsertConversation({
     accountId: account.id,
@@ -169,8 +182,11 @@ async function handleCommentEvent(account: Account, value: any): Promise<void> {
     author: fromUsername ?? fromId,
     text,
     raw: value,
+    ignored: Boolean(ignoredReason),
+    ignoredReason,
   });
-  if (!saved) return;
+  if (!saved) return; // duplicate
+  if (ignoredReason || !text) return; // recorded for observability; not an inbox item
 
   if (!account.autoMode) {
     await sendAlert(`🟣 Новый комментарий в инбоксе\n\nОт: ${fromUsername ?? fromId}\n${text}`);
