@@ -18,6 +18,15 @@ const CATEGORY_TONE: Record<string, "accent" | "success" | "danger" | "warn" | "
   offtopic: "neutral",
 };
 
+/** Quick-insert emoji preset for the reply field. */
+const EMOJI = ["👍", "❤️", "🔥", "🙏", "😊", "😂", "🎉", "👏", "🙌", "✅"];
+
+function timeLabel(v: string | Date): string {
+  const d = typeof v === "string" ? new Date(v) : v;
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
 export function InboxCard({
   item,
   model,
@@ -27,8 +36,10 @@ export function InboxCard({
   model: string;
   onDone: () => void;
 }) {
-  const { event, conversation, replies } = item;
+  const { event, conversation, replies, messages } = item;
   const isComment = conversation.kind === "comment";
+  // DM chat feed: skip empty events (reactions/attachments carry no text).
+  const feed = (messages ?? []).filter((m) => m.text && m.text.trim());
   const [text, setText] = useState("");
   const [generating, setGenerating] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -102,33 +113,83 @@ export function InboxCard({
         )}
       </div>
 
-      <p className="mb-3 whitespace-pre-wrap text-[var(--color-fg)]">{event.text}</p>
-      {isComment && conversation.mediaCaption && (
-        <p className="mb-3 line-clamp-2 text-xs text-[var(--color-muted)]">
-          под постом: {conversation.mediaCaption}
-        </p>
-      )}
-
-      {replies.length > 0 && (
-        <div className="mb-3 space-y-1.5 border-l-2 border-[var(--color-border)] pl-3">
-          {replies.map((r) => {
-            const mine = r.direction === "out";
-            return (
-              <p key={r.id} className="whitespace-pre-wrap text-sm">
-                <span
-                  className={cn(
-                    "font-medium",
-                    mine ? "text-[var(--color-accent)]" : "text-[var(--color-fg)]",
-                  )}
+      {isComment ? (
+        <>
+          <p className="mb-3 whitespace-pre-wrap text-[var(--color-fg)]">{event.text}</p>
+          {conversation.mediaCaption && (
+            <p className="mb-3 line-clamp-2 text-xs text-[var(--color-muted)]">
+              под постом: {conversation.mediaCaption}
+            </p>
+          )}
+          {replies.length > 0 && (
+            <div className="mb-3 space-y-1.5 border-l-2 border-[var(--color-border)] pl-3">
+              {replies.map((r) => {
+                const mine = r.direction === "out";
+                return (
+                  <p key={r.id} className="whitespace-pre-wrap text-sm">
+                    <span
+                      className={cn(
+                        "font-medium",
+                        mine ? "text-[var(--color-accent)]" : "text-[var(--color-fg)]",
+                      )}
+                    >
+                      {mine ? "Я" : (r.author ?? "?")}:
+                    </span>{" "}
+                    <span className="text-[var(--color-muted)]">{r.text}</span>
+                  </p>
+                );
+              })}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="mb-3 space-y-2">
+          {feed.length === 0 ? (
+            <p className="text-sm text-[var(--color-muted)]">
+              Нет текстовых сообщений (реакции/вложения).
+            </p>
+          ) : (
+            feed.map((m) => {
+              const mine = m.direction === "out";
+              return (
+                <div
+                  key={m.id}
+                  className={cn("flex flex-col", mine ? "items-end" : "items-start")}
                 >
-                  {mine ? "Я" : (r.author ?? "?")}:
-                </span>{" "}
-                <span className="text-[var(--color-muted)]">{r.text}</span>
-              </p>
-            );
-          })}
+                  <div
+                    className={cn(
+                      "max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap",
+                      mine
+                        ? "bg-[var(--color-accent)] text-white rounded-br-sm"
+                        : "bg-[var(--color-surface-2)] text-[var(--color-fg)] rounded-bl-sm",
+                    )}
+                  >
+                    {m.text}
+                  </div>
+                  <span className="mt-0.5 px-1 text-[10px] text-[var(--color-muted)]">
+                    {mine ? "Я" : who} · {timeLabel(m.createdAt)}
+                  </span>
+                </div>
+              );
+            })
+          )}
         </div>
       )}
+
+      <div className="mb-2 flex flex-wrap gap-1">
+        {EMOJI.map((e) => (
+          <button
+            key={e}
+            type="button"
+            onClick={() => setText((t) => t + e)}
+            disabled={busy}
+            className="rounded-md px-1.5 py-0.5 text-base leading-none transition-colors hover:bg-[var(--color-surface-2)]"
+            title={`Вставить ${e}`}
+          >
+            {e}
+          </button>
+        ))}
+      </div>
 
       <Textarea
         value={text}

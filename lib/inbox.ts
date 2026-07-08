@@ -174,9 +174,11 @@ export async function recordOutbound(input: OutboundInput): Promise<void> {
 export interface InboxItem {
   event: Event;
   conversation: Conversation;
-  /** The thread under this item: comment replies (by parent_external_id) or, for
-   *  DMs, our outbound messages sent after it. Oldest-first. */
+  /** Comment replies (by parent_external_id), oldest-first. Empty for DM threads. */
   replies: Event[];
+  /** DM only: the whole conversation, both directions, oldest-first (chat feed).
+   *  Undefined for comments. */
+  messages?: Event[];
 }
 
 /**
@@ -233,28 +235,110 @@ async function attachReplies(
   }));
 }
 
-/** List inbox items (inbound, `triaged` by default) with their reply threads. */
+/**
+ * Comment inbox items: one per inbound comment matching the status filter, each
+ * with its reply thread. (DMs are handled separately as one card per thread.)
+ */
+async function listCommentItems(
+  statuses: Event["status"][],
+  limit: number,
+): Promise<InboxItem[]> {
+  const rows = await db
+    .select({ event: events, conversation: conversations })
+    .from(events)
+    .innerJoin(conversations, eq(events.conversationId, conversations.id))
+    .where(
+      and(
+        eq(events.direction, "in"),
+        eq(events.ignored, false), // hide auto-skipped (echo/reply/empty) noise
+        inArray(events.status, statuses),
+        eq(conversations.kind, "comment"),
+      ),
+    )
+    .orderBy(desc(events.createdAt))
+    .limit(limit);
+  return attachReplies(rows);
+}
+
+/**
+ * DM inbox: ONE card per conversation (not per message). Each card carries the
+ * full chat feed (`messages`, both directions, oldest-first). A thread's tab is
+ * derived at the conversation level: it's "new" (triaged) while it has an open
+ * inbound (non-ignored, still `triaged`); otherwise, if we've ever replied
+ * (any outbound), it's "answered". Threads with neither — e.g. only skipped
+ * reactions and no reply — surface nowhere. This is why the anna case (empty
+ * inbound + our replies) shows up under Answered even with no open inbound.
+ */
+async function listDmThreads(
+  statuses: Event["status"][],
+  limit: number,
+): Promise<InboxItem[]> {
+  const convoRows = await db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.kind, "dm"))
+    .orderBy(desc(conversations.lastActivityAt))
+    .limit(limit);
+  if (!convoRows.length) return [];
+  const convoById = new Map(convoRows.map((c) => [c.id, c]));
+
+  const evRows = await db
+    .select()
+    .from(events)
+    .where(inArray(events.conversationId, [...convoById.keys()]))
+    .orderBy(events.createdAt);
+
+  const byConvo = new Map<string, Event[]>();
+  for (const e of evRows) {
+    const arr = byConvo.get(e.conversationId);
+    if (arr) arr.push(e);
+    else byConvo.set(e.conversationId, [e]);
+  }
+
+  const wantTriaged = statuses.includes("triaged");
+  const wantAnswered = statuses.some((s) => s !== "triaged"); // answered / all
+
+  const out: InboxItem[] = [];
+  for (const [cid, msgs] of byConvo) {
+    const conversation = convoById.get(cid)!;
+    const inbound = msgs.filter((m) => m.direction === "in");
+    const openInbound = inbound.filter((m) => !m.ignored && m.status === "triaged");
+    const hasOutbound = msgs.some((m) => m.direction === "out");
+    const isNew = openInbound.length > 0;
+
+    // Tab visibility: new threads → Новые; replied-to threads → Отвеченные.
+    if (isNew ? !wantTriaged : !(wantAnswered && hasOutbound)) continue;
+
+    // Reply target: latest open inbound (so status close targets a live one),
+    // else latest inbound, else latest message of any kind.
+    const rep =
+      openInbound[openInbound.length - 1] ??
+      inbound[inbound.length - 1] ??
+      msgs[msgs.length - 1];
+    out.push({ event: rep, conversation, replies: [], messages: msgs });
+  }
+  return out;
+}
+
+/** List inbox items (comments one-per-comment; DMs one-per-thread). */
 export async function listInbox(opts?: {
   kind?: "dm" | "comment";
   statuses?: Event["status"][];
   limit?: number;
 }): Promise<InboxItem[]> {
   const statuses = opts?.statuses ?? ["triaged"];
-  const conds = [
-    eq(events.direction, "in"),
-    eq(events.ignored, false), // hide auto-skipped (echo/reply/empty) noise
-    inArray(events.status, statuses),
-  ];
-  if (opts?.kind) conds.push(eq(conversations.kind, opts.kind));
+  const limit = opts?.limit ?? 200;
 
-  const rows = await db
-    .select({ event: events, conversation: conversations })
-    .from(events)
-    .innerJoin(conversations, eq(events.conversationId, conversations.id))
-    .where(and(...conds))
-    .orderBy(desc(events.createdAt))
-    .limit(opts?.limit ?? 200);
-  return attachReplies(rows);
+  const [comments, dms] = await Promise.all([
+    opts?.kind === "dm" ? Promise.resolve<InboxItem[]>([]) : listCommentItems(statuses, limit),
+    opts?.kind === "comment" ? Promise.resolve<InboxItem[]>([]) : listDmThreads(statuses, limit),
+  ]);
+
+  // Merge both kinds newest-first by the representative event's time.
+  const merged = [...comments, ...dms].sort(
+    (a, b) => new Date(b.event.createdAt).getTime() - new Date(a.event.createdAt).getTime(),
+  );
+  return merged.slice(0, limit);
 }
 
 /** A single inbox item with its conversation + reply thread. */
@@ -281,6 +365,30 @@ export async function threadHistory(
   return rows
     .filter((r) => r.text)
     .map((r) => ({ role: r.direction === "in" ? "user" : "assistant", text: r.text! }));
+}
+
+/**
+ * Close a whole DM thread: mark every open inbound (non-ignored, still `triaged`)
+ * in the conversation with the given terminal status. A DM card shows one reply
+ * box for many messages, so one send must clear all of them — otherwise a thread
+ * with several unanswered "Привет!" lingers in Новые after we've replied.
+ */
+export async function closeDmThread(
+  conversationId: string,
+  status: Event["status"],
+  extra?: { category?: Event["category"]; escalation?: Event["escalation"]; modelUsed?: string },
+): Promise<void> {
+  await db
+    .update(events)
+    .set({ status, handledAt: new Date(), ...extra })
+    .where(
+      and(
+        eq(events.conversationId, conversationId),
+        eq(events.direction, "in"),
+        eq(events.ignored, false),
+        eq(events.status, "triaged"),
+      ),
+    );
 }
 
 /** Update an event's status (+ optional metadata). */
@@ -357,13 +465,23 @@ export async function failEvent(id: string, error: string, retry: boolean): Prom
     .where(eq(events.id, id));
 }
 
-/** Count of unhandled inbox items, for the badge. */
+/**
+ * Count of unhandled inbox cards, for the badge. Comments count per open comment;
+ * DMs count per thread (a conversation with several open inbounds is one card).
+ */
 export async function inboxCount(): Promise<number> {
   const rows = await db
-    .select({ id: events.id })
+    .select({ kind: conversations.kind, conversationId: events.conversationId })
     .from(events)
+    .innerJoin(conversations, eq(events.conversationId, conversations.id))
     .where(
       and(eq(events.direction, "in"), eq(events.ignored, false), eq(events.status, "triaged")),
     );
-  return rows.length;
+  let comments = 0;
+  const dmThreads = new Set<string>();
+  for (const r of rows) {
+    if (r.kind === "dm") dmThreads.add(r.conversationId);
+    else comments++;
+  }
+  return comments + dmThreads.size;
 }

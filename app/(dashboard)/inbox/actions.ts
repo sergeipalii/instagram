@@ -9,6 +9,7 @@ import {
 } from "@/lib/ig";
 import { generateReply, decideOnComment } from "@/lib/claude";
 import {
+  closeDmThread,
   getInboxItem,
   listInbox,
   threadHistory,
@@ -48,7 +49,13 @@ export async function sendReply(
       modelUsed,
       parentExternalId,
     });
-    await setEventStatus(eventId, "answered", { modelUsed });
+    // DM cards are one-per-thread: close every open inbound, not just the target.
+    // Comments stay one-per-item.
+    if (item.conversation.kind === "dm") {
+      await closeDmThread(item.conversation.id, "answered", { modelUsed });
+    } else {
+      await setEventStatus(eventId, "answered", { modelUsed });
+    }
     revalidatePath("/inbox");
     return { ok: true };
   } catch (e: any) {
@@ -114,7 +121,9 @@ export async function bulkAutoReply(modelId?: string): Promise<BulkResult> {
   for (const { event, conversation } of items) {
     const text = event.text?.trim();
     if (!text) {
-      await setEventStatus(event.id, "skipped");
+      // DM cards are one-per-thread: dismiss the whole thread, not one message.
+      if (conversation.kind === "dm") await closeDmThread(conversation.id, "skipped");
+      else await setEventStatus(event.id, "skipped");
       res.skipped++;
       continue;
     }
@@ -130,10 +139,10 @@ export async function bulkAutoReply(modelId?: string): Promise<BulkResult> {
             text: decision.reply,
             modelUsed: modelId,
           });
-          await setEventStatus(event.id, "auto", { escalation: decision.escalate, modelUsed: modelId });
+          await closeDmThread(conversation.id, "auto", { escalation: decision.escalate, modelUsed: modelId });
           res.answered++;
         } else {
-          await setEventStatus(event.id, "skipped");
+          await closeDmThread(conversation.id, "skipped");
           res.skipped++;
         }
       } else {

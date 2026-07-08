@@ -23,6 +23,8 @@ export interface InboxItemView {
     permalink: string | null;
     mediaCaption: string | null;
   };
-  /** Reply thread under this item (comment replies / our DM replies), oldest-first. */
+  /** Comment reply thread (comment replies), oldest-first. Empty for DMs. */
   replies: EventView[];
+  /** DM only: the whole conversation, both directions, oldest-first (chat feed). */
+  messages?: EventView[];
 }
