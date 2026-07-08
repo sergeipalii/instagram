@@ -107,6 +107,8 @@ interface InboundInput {
   text?: string;
   attachments?: unknown;
   raw?: unknown;
+  /** external_id of the parent (top-level) comment, for reply threading. */
+  parentExternalId?: string;
 }
 
 /**
@@ -129,6 +131,7 @@ export async function recordInbound(input: InboundInput): Promise<Event | null> 
       text: input.text,
       attachments: input.attachments ?? null,
       raw: input.raw ?? null,
+      parentExternalId: input.parentExternalId ?? null,
       // inbound → DB default 'received'; outbound echo → terminal 'answered'
       ...(outbound ? { status: "answered" as const, handledAt: new Date() } : {}),
     })
@@ -139,12 +142,16 @@ export async function recordInbound(input: InboundInput): Promise<Event | null> 
 
 interface OutboundInput {
   conversationId: string;
+  /** Prefer the REAL id returned by the send API — the later poll/webhook
+   *  re-ingest of our own message then dedups on it (onConflictDoNothing). */
   externalId: string;
   text: string;
   modelUsed?: string;
+  /** For comment replies: the parent (top-level) comment's external_id. */
+  parentExternalId?: string;
 }
 
-/** Record a reply we sent (for thread history). */
+/** Record a reply we sent (shows in the thread immediately; poll re-ingest dedups). */
 export async function recordOutbound(input: OutboundInput): Promise<void> {
   await db
     .insert(events)
@@ -157,6 +164,7 @@ export async function recordOutbound(input: OutboundInput): Promise<void> {
       status: "answered",
       modelUsed: input.modelUsed,
       handledAt: new Date(),
+      parentExternalId: input.parentExternalId ?? null,
     })
     .onConflictDoNothing({ target: events.externalId });
 }
@@ -164,9 +172,66 @@ export async function recordOutbound(input: OutboundInput): Promise<void> {
 export interface InboxItem {
   event: Event;
   conversation: Conversation;
+  /** The thread under this item: comment replies (by parent_external_id) or, for
+   *  DMs, our outbound messages sent after it. Oldest-first. */
+  replies: Event[];
 }
 
-/** List inbox items (inbound + `new` by default), newest first. */
+/**
+ * Attach the reply thread to each item in one batched pass. Comments: events
+ * whose parent_external_id points at the top comment. DMs: outbound events in
+ * the same conversation newer than the item (our replies).
+ */
+async function attachReplies(
+  base: { event: Event; conversation: Conversation }[],
+): Promise<InboxItem[]> {
+  if (!base.length) return [];
+  const commentExtIds = base
+    .filter((i) => i.conversation.kind === "comment")
+    .map((i) => i.event.externalId);
+  const dmConvoIds = base
+    .filter((i) => i.conversation.kind === "dm")
+    .map((i) => i.conversation.id);
+
+  const commentReplies = commentExtIds.length
+    ? await db
+        .select()
+        .from(events)
+        .where(inArray(events.parentExternalId, commentExtIds))
+        .orderBy(events.createdAt)
+    : [];
+  const dmReplies = dmConvoIds.length
+    ? await db
+        .select()
+        .from(events)
+        .where(and(inArray(events.conversationId, dmConvoIds), eq(events.direction, "out")))
+        .orderBy(events.createdAt)
+    : [];
+
+  const byParent = new Map<string, Event[]>();
+  for (const r of commentReplies) {
+    const k = r.parentExternalId!;
+    const arr = byParent.get(k);
+    if (arr) arr.push(r);
+    else byParent.set(k, [r]);
+  }
+  const byConvo = new Map<string, Event[]>();
+  for (const r of dmReplies) {
+    const arr = byConvo.get(r.conversationId);
+    if (arr) arr.push(r);
+    else byConvo.set(r.conversationId, [r]);
+  }
+
+  return base.map((i) => ({
+    ...i,
+    replies:
+      i.conversation.kind === "comment"
+        ? (byParent.get(i.event.externalId) ?? [])
+        : (byConvo.get(i.conversation.id) ?? []).filter((r) => r.createdAt > i.event.createdAt),
+  }));
+}
+
+/** List inbox items (inbound, `triaged` by default) with their reply threads. */
 export async function listInbox(opts?: {
   kind?: "dm" | "comment";
   statuses?: Event["status"][];
@@ -175,7 +240,7 @@ export async function listInbox(opts?: {
   const statuses = opts?.statuses ?? ["triaged"];
   const conds = [
     eq(events.direction, "in"),
-    eq(events.ignored, false), // hide echo / our own / replies from the inbox
+    eq(events.ignored, false), // hide auto-skipped (echo/reply/empty) noise
     inArray(events.status, statuses),
   ];
   if (opts?.kind) conds.push(eq(conversations.kind, opts.kind));
@@ -187,17 +252,19 @@ export async function listInbox(opts?: {
     .where(and(...conds))
     .orderBy(desc(events.createdAt))
     .limit(opts?.limit ?? 200);
-  return rows;
+  return attachReplies(rows);
 }
 
-/** A single inbox item with its conversation. */
+/** A single inbox item with its conversation + reply thread. */
 export async function getInboxItem(eventId: string): Promise<InboxItem | null> {
   const [row] = await db
     .select({ event: events, conversation: conversations })
     .from(events)
     .innerJoin(conversations, eq(events.conversationId, conversations.id))
     .where(eq(events.id, eventId));
-  return row ?? null;
+  if (!row) return null;
+  const [item] = await attachReplies([row]);
+  return item ?? null;
 }
 
 /** Prior messages in a DM thread, oldest-first, for model context. */

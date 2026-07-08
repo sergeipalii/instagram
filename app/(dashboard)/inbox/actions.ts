@@ -28,19 +28,25 @@ export async function sendReply(
   if (!item) return { ok: false, error: "Не найдено" };
 
   try {
+    let sentId: string | undefined;
+    let parentExternalId: string | undefined;
     if (item.conversation.kind === "dm") {
       const recipient = item.conversation.participantId;
       if (!recipient) return { ok: false, error: "Нет получателя" };
-      await sendMessage(recipient, body);
+      sentId = await sendMessage(recipient, body);
     } else {
       // Public reply in the comment thread (event.externalId = comment id).
-      await replyToComment(item.event.externalId, body);
+      sentId = await replyToComment(item.event.externalId, body);
+      parentExternalId = item.event.externalId;
     }
+    // Record under the REAL id so the later poll/webhook re-ingest dedups; fall
+    // back to a synthetic id if the API didn't return one.
     await recordOutbound({
       conversationId: item.conversation.id,
-      externalId: `out:${eventId}`,
+      externalId: sentId || `out:${eventId}`,
       text: body,
       modelUsed,
+      parentExternalId,
     });
     await setEventStatus(eventId, "answered", { modelUsed });
     revalidatePath("/inbox");
@@ -117,10 +123,10 @@ export async function bulkAutoReply(modelId?: string): Promise<BulkResult> {
         const history = await threadHistory(conversation.id);
         const decision = await generateReply(text, history.slice(0, -1), modelId);
         if (decision.reply && conversation.participantId) {
-          await sendMessage(conversation.participantId, decision.reply);
+          const mid = await sendMessage(conversation.participantId, decision.reply);
           await recordOutbound({
             conversationId: conversation.id,
-            externalId: `out:${event.id}`,
+            externalId: mid || `out:${event.id}`,
             text: decision.reply,
             modelUsed: modelId,
           });
@@ -141,13 +147,14 @@ export async function bulkAutoReply(modelId?: string): Promise<BulkResult> {
           await setEventStatus(event.id, "hidden", { category: decision.category, modelUsed: modelId });
           res.hidden++;
         } else if (decision.public_reply) {
-          await replyToComment(event.externalId, decision.public_reply);
+          const newId = await replyToComment(event.externalId, decision.public_reply);
           if (decision.dm_text) await privateReplyToComment(event.externalId, decision.dm_text);
           await recordOutbound({
             conversationId: conversation.id,
-            externalId: `out:${event.id}`,
+            externalId: newId || `out:${event.id}`,
             text: decision.public_reply,
             modelUsed: modelId,
+            parentExternalId: event.externalId,
           });
           await setEventStatus(event.id, "auto", { category: decision.category, modelUsed: modelId });
           res.answered++;

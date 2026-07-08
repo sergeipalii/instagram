@@ -113,6 +113,10 @@ export const events = pgTable(
     // `ignored = false`, so validation + handling are observable without noise.
     ignored: boolean("ignored").notNull().default(false),
     ignoredReason: text("ignored_reason"),
+    // Comment threading: the external_id of the parent (top-level) comment this
+    // is a reply to; null for top-level comments and DMs. Lets us reconstruct a
+    // thread (top comment + its replies, ours included) with one indexed query.
+    parentExternalId: text("parent_external_id"),
   },
   (t) => [
     uniqueIndex("events_external_id").on(t.externalId),
@@ -120,6 +124,8 @@ export const events = pgTable(
     index("events_conversation").on(t.conversationId),
     // Processor queue: WHERE direction='in' AND status='received' ORDER BY created_at.
     index("events_queue").on(t.direction, t.status, t.createdAt),
+    // Thread reconstruction: WHERE parent_external_id = <top comment external_id>.
+    index("events_parent").on(t.parentExternalId),
   ],
 );
 

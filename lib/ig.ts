@@ -46,14 +46,16 @@ export async function getAccountStats(): Promise<{ followers: number; media: num
   return { followers: json.followers_count ?? 0, media: json.media_count ?? 0 };
 }
 
-/** Send a text DM reply to a user (within the 24-hour messaging window). */
-export async function sendMessage(recipientId: string, text: string): Promise<void> {
+/** Send a text DM reply (within the 24-hour messaging window). Returns the sent
+ *  message id (so we record it under its real id and dedup the echo/poll). */
+export async function sendMessage(recipientId: string, text: string): Promise<string> {
   const token = await getToken();
-  await igPost(`${env.igUserId()}/messages`, {
+  const json = await igPost(`${env.igUserId()}/messages`, {
     recipient: JSON.stringify({ id: recipientId }),
     message: JSON.stringify({ text }),
     access_token: token,
   });
+  return json.message_id;
 }
 
 // ─── Reads (used by the inbox backfill / sync) ───────────────────────────────
@@ -110,10 +112,12 @@ export async function getMediaComments(mediaId: string): Promise<any[]> {
 
 // ─── Comments ────────────────────────────────────────────────────────────────
 
-/** Public reply in the comment thread. */
-export async function replyToComment(commentId: string, text: string): Promise<void> {
+/** Public reply in the comment thread. Returns the new comment's id (so we can
+ *  record it under its real id and dedup the later poll/webhook re-ingest). */
+export async function replyToComment(commentId: string, text: string): Promise<string> {
   const token = await getToken();
-  await igPost(`${commentId}/replies`, { message: text, access_token: token });
+  const json = await igPost(`${commentId}/replies`, { message: text, access_token: token });
+  return json.id;
 }
 
 /**

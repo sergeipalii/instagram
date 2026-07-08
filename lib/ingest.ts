@@ -72,5 +72,6 @@ export async function ingestComment(account: Account, c: CommentIngest) {
     author: c.fromUsername ?? c.fromId,
     text: c.text,
     raw: c.raw,
+    parentExternalId: c.parentId,
   });
 }

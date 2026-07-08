@@ -123,10 +123,10 @@ async function processOne(
   if (kind === "dm") {
     const decision = await generateReply(text, [], model);
     if (decision.reply && ev.author) {
-      await sendMessage(ev.author, decision.reply);
+      const mid = await sendMessage(ev.author, decision.reply);
       await recordOutbound({
         conversationId: ev.conversationId,
-        externalId: `out:${ev.externalId}`,
+        externalId: mid || `out:${ev.externalId}`,
         text: decision.reply,
         modelUsed: model,
       });
@@ -149,16 +149,28 @@ async function processOne(
     return;
   }
   const commentId = ev.externalId;
+  // Record a public reply we post, under its real id (dedups the poll re-ingest)
+  // and linked to the parent comment so it shows in the thread.
+  const recordPublicReply = async (replyText: string) => {
+    const newId = await replyToComment(commentId, replyText);
+    await recordOutbound({
+      conversationId: ev.conversationId,
+      externalId: newId || `out:${commentId}`,
+      text: replyText,
+      modelUsed: model,
+      parentExternalId: commentId,
+    });
+  };
   switch (decision.category) {
     case "question_or_lead":
-      if (decision.public_reply) await replyToComment(commentId, decision.public_reply);
+      if (decision.public_reply) await recordPublicReply(decision.public_reply);
       if (decision.dm_text) await privateReplyToComment(commentId, decision.dm_text);
       await sendAlert(
         `🔥 Горячий лид — комментарий (авто)\n\nОт: ${ev.author}\nКомментарий:\n${text}\n\nМой ответ в личку:\n${decision.dm_text ?? "—"}`,
       );
       break;
     case "praise":
-      if (decision.public_reply) await replyToComment(commentId, decision.public_reply);
+      if (decision.public_reply) await recordPublicReply(decision.public_reply);
       break;
     case "spam":
     case "toxic":

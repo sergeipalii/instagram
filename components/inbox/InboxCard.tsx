@@ -27,7 +27,7 @@ export function InboxCard({
   model: string;
   onDone: () => void;
 }) {
-  const { event, conversation } = item;
+  const { event, conversation, replies } = item;
   const isComment = conversation.kind === "comment";
   const [text, setText] = useState("");
   const [generating, setGenerating] = useState(false);
@@ -68,7 +68,11 @@ export function InboxCard({
     else setError(r.error ?? "Ошибка");
   }
 
-  const who = conversation.participantUsername ?? event.author ?? "неизвестный";
+  // For comments the author is always the event's author — the conversation is
+  // keyed by media, so its participant is meaningless (last commenter, often us).
+  const who = isComment
+    ? (event.author ?? "неизвестный")
+    : (conversation.participantUsername ?? event.author ?? "неизвестный");
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
@@ -103,6 +107,27 @@ export function InboxCard({
         <p className="mb-3 line-clamp-2 text-xs text-[var(--color-muted)]">
           под постом: {conversation.mediaCaption}
         </p>
+      )}
+
+      {replies.length > 0 && (
+        <div className="mb-3 space-y-1.5 border-l-2 border-[var(--color-border)] pl-3">
+          {replies.map((r) => {
+            const mine = r.direction === "out";
+            return (
+              <p key={r.id} className="whitespace-pre-wrap text-sm">
+                <span
+                  className={cn(
+                    "font-medium",
+                    mine ? "text-[var(--color-accent)]" : "text-[var(--color-fg)]",
+                  )}
+                >
+                  {mine ? "Я" : (r.author ?? "?")}:
+                </span>{" "}
+                <span className="text-[var(--color-muted)]">{r.text}</span>
+              </p>
+            );
+          })}
+        </div>
       )}
 
       <Textarea

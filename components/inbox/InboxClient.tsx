@@ -30,6 +30,13 @@ import type { InboxItemView } from "./types";
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 type Filter = "all" | "dm" | "comment";
+type StatusFilter = "triaged" | "answered" | "all";
+
+const STATUS_TABS: { value: StatusFilter; label: string }[] = [
+  { value: "triaged", label: "Новые" },
+  { value: "answered", label: "Отвеченные" },
+  { value: "all", label: "Все" },
+];
 
 export function InboxClient({
   initialItems,
@@ -42,15 +49,21 @@ export function InboxClient({
 }) {
   const router = useRouter();
   const [filter, setFilter] = useState<Filter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("triaged");
   const [model, setModel] = useState(defaultModel);
   const [syncing, setSyncing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkResult, setBulkResult] = useState<BulkResult | null>(null);
 
-  const key = `/api/inbox?status=triaged${filter !== "all" ? `&kind=${filter}` : ""}`;
+  const statusParam = statusFilter === "all" ? "triaged,answered" : statusFilter;
+  const key = `/api/inbox?status=${statusParam}${filter !== "all" ? `&kind=${filter}` : ""}`;
   const { data, mutate, isLoading } = useSWR<{ items: InboxItemView[] }>(key, fetcher, {
-    fallbackData: { items: filter === "all" ? initialItems : initialItems.filter((i) => i.conversation.kind === filter) },
+    // Only the default (new) view has server-rendered initial data.
+    fallbackData:
+      statusFilter === "triaged"
+        ? { items: filter === "all" ? initialItems : initialItems.filter((i) => i.conversation.kind === filter) }
+        : undefined,
     refreshInterval: 8000,
   });
   const items = data?.items ?? [];
@@ -115,6 +128,23 @@ export function InboxClient({
           </Button>
         </div>
       </header>
+
+      <div className="mb-3 flex items-center gap-2 border-b border-[var(--color-border)] pb-3">
+        {STATUS_TABS.map((t) => (
+          <button
+            key={t.value}
+            onClick={() => setStatusFilter(t.value)}
+            className={cn(
+              "rounded-lg px-3 py-1 text-sm font-medium transition-colors",
+              statusFilter === t.value
+                ? "bg-[var(--color-surface-2)] text-[var(--color-fg)]"
+                : "text-[var(--color-muted)] hover:text-[var(--color-fg)]",
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
       <div className="mb-4 flex items-center gap-2">
         {(["all", "dm", "comment"] as Filter[]).map((f) => (
