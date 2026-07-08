@@ -6,63 +6,69 @@ import {
   getMediaList,
   getMediaComments,
 } from "./ig";
-import {
-  getOrCreateAccount,
-  upsertConversation,
-  recordInbound,
-  recordOutbound,
-} from "./inbox";
+import { getOrCreateAccount } from "./inbox";
+import { ingestDm, ingestComment } from "./ingest";
 
 export interface SyncResult {
-  dms: number;
-  comments: number;
+  dms: number; // new inbound DM rows written
+  comments: number; // new inbound comment rows written
+  calls: number; // Graph API calls spent
+  skipped: string[]; // surfaces we didn't reach (budget/cap) — no silent truncation
   errors: string[];
 }
 
+// Rate-limit guardrails: Instagram allows ~200 calls/user/hour. At a 30-min poll
+// cadence that's 2 runs/hour, so cap each run well under half the budget.
+const MAX_GRAPH_CALLS = 40;
+const CONVO_RECENT_MS = 60 * 60 * 1000; // only threads active in the last hour
+const MEDIA_RECENT_MS = 30 * 24 * 60 * 60 * 1000; // only media from the last 30 days
+const MAX_CONVOS = 20;
+const MAX_MEDIA = 15;
+
 /**
- * Backfill existing DMs + comments from the Graph API into the inbox. Idempotent
- * (recordInbound dedups by external id), so it's safe to re-run. New inbound
- * items land as `new`; our own past messages are recorded as outbound history.
+ * Poll the Graph API and DUMB-ingest new DMs + comments into the queue (status
+ * `received`; the process-events cron classifies later). This is the fallback
+ * for anything a webhook missed — idempotent (ingest dedups by external id), so
+ * webhook and poll never double-record. Bounded to MAX_GRAPH_CALLS per run and
+ * to recently-active threads/media so it can't blow the rate limit.
  */
 export async function syncInbox(): Promise<SyncResult> {
   const uid = env.igUserId();
+  const result: SyncResult = { dms: 0, comments: 0, calls: 0, skipped: [], errors: [] };
+  const now = Date.now();
+
   const me = await getMe().catch(() => ({ username: undefined }));
+  result.calls++;
   const account = await getOrCreateAccount(uid, me.username);
-  const result: SyncResult = { dms: 0, comments: 0, errors: [] };
 
   // ── DMs ──
   try {
-    for (const convo of await getConversations()) {
-      const others = (convo.participants?.data ?? []).filter(
+    const convos = await getConversations();
+    result.calls++;
+    const recent = convos.filter(
+      (c) => !c.updated_time || now - Date.parse(c.updated_time) < CONVO_RECENT_MS,
+    );
+    let taken = 0;
+    for (const convo of recent) {
+      if (taken >= MAX_CONVOS || result.calls >= MAX_GRAPH_CALLS) {
+        result.skipped.push(`convos:${recent.length - taken}`);
+        break;
+      }
+      const participant = (convo.participants?.data ?? []).find(
         (p: any) => String(p.id) !== String(uid),
       );
-      const participant = others[0];
-      const conversationId = await upsertConversation({
-        accountId: account.id,
-        kind: "dm",
-        externalId: participant?.id ?? convo.id,
-        participantId: participant?.id,
-        participantUsername: participant?.username,
-      });
       const messages = await getConversationMessages(convo.id).catch(() => []);
+      result.calls++;
+      taken++;
       for (const m of messages) {
-        const fromUs = String(m.from?.id) === String(uid);
-        if (fromUs) {
-          await recordOutbound({
-            conversationId,
-            externalId: m.id,
-            text: m.message ?? "",
-          });
-        } else {
-          const saved = await recordInbound({
-            conversationId,
-            externalId: m.id,
-            author: m.from?.username ?? m.from?.id,
-            text: m.message,
-            raw: m,
-          });
-          if (saved) result.dms++;
-        }
+        const saved = await ingestDm(account, {
+          senderId: String(m.from?.id ?? participant?.id ?? convo.id),
+          recipientId: participant?.id,
+          mid: m.id,
+          text: m.message,
+          raw: m,
+        });
+        if (saved && saved.direction === "in") result.dms++;
       }
     }
   } catch (e: any) {
@@ -71,29 +77,33 @@ export async function syncInbox(): Promise<SyncResult> {
 
   // ── Comments ──
   try {
-    for (const media of await getMediaList()) {
-      if (!media.comments_count) continue;
-      const comments = await getMediaComments(media.id).catch(() => []);
+    const media = await getMediaList();
+    result.calls++;
+    const recent = media.filter(
+      (m) => m.comments_count && (!m.timestamp || now - Date.parse(m.timestamp) < MEDIA_RECENT_MS),
+    );
+    let taken = 0;
+    for (const md of recent) {
+      if (taken >= MAX_MEDIA || result.calls >= MAX_GRAPH_CALLS) {
+        result.skipped.push(`media:${recent.length - taken}`);
+        break;
+      }
+      const comments = await getMediaComments(md.id).catch(() => []);
+      result.calls++;
+      taken++;
       for (const c of comments) {
-        if (c.parent_id) continue; // top-level only
-        if (String(c.from?.id) === String(uid)) continue; // our own
-        const conversationId = await upsertConversation({
-          accountId: account.id,
-          kind: "comment",
-          externalId: media.id,
-          participantId: c.from?.id,
-          participantUsername: c.from?.username,
-          permalink: media.permalink,
-          mediaCaption: media.caption,
-        });
-        const saved = await recordInbound({
-          conversationId,
-          externalId: c.id,
-          author: c.from?.username ?? c.from?.id,
+        const saved = await ingestComment(account, {
+          commentId: c.id,
+          mediaId: md.id,
+          fromId: c.from?.id,
+          fromUsername: c.from?.username,
           text: c.text,
+          parentId: c.parent_id,
+          permalink: md.permalink,
+          mediaCaption: md.caption,
           raw: c,
         });
-        if (saved) result.comments++;
+        if (saved && saved.direction === "in") result.comments++;
       }
     }
   } catch (e: any) {

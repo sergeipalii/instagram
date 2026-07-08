@@ -1,0 +1,20 @@
+name: process-events
+
+# Drains the inbox queue: claims `received` events and processes them (filter,
+# classify, act, set terminal status). Runs on GitHub Actions instead of Vercel
+# cron (Hobby caps crons at 2 / daily). GitHub's minimum interval is 5 minutes.
+# Needs repo secret CRON_SECRET = the Vercel CRON_SECRET.
+on:
+  schedule:
+    - cron: "*/5 * * * *" # every 5 minutes (GitHub Actions minimum)
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit /api/cron/process-events
+        run: |
+          curl -fsS --max-time 60 -X GET \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            https://inbox.sepia.software/api/cron/process-events

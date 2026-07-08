@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "./db";
 import {
   accounts,
@@ -101,35 +101,36 @@ export async function upsertConversation(input: ConvoInput): Promise<string> {
 interface InboundInput {
   conversationId: string;
   externalId: string;
+  /** "in" (default) queues for the processor; "out" (echoes/own) is inert history. */
+  direction?: "in" | "out";
   author?: string;
   text?: string;
   attachments?: unknown;
   raw?: unknown;
-  /** Persist but keep out of the inbox (echo / our own / reply / empty). */
-  ignored?: boolean;
-  ignoredReason?: string;
 }
 
 /**
- * Record an inbound message/comment. Normally a `new` inbox item; pass
- * `ignored` to persist it for observability while hiding it from the inbox
- * (the read side filters `ignored = false`). Idempotent: a redelivered webhook
- * (same externalId) is silently ignored. Returns the event, or null on dupe.
+ * Dumb ingest primitive: persist one received event verbatim. Inbound rows land
+ * as `received` (the processor queue via the DB default); no filtering or
+ * classification happens here — that's the process-events cron. Outbound echoes
+ * (our own messages Meta reflects back) are recorded as `answered` history and
+ * never enter the queue/inbox (both filter `direction = 'in'`). Idempotent by
+ * externalId (dedups webhook↔poll redelivery). Returns the row, or null on dupe.
  */
 export async function recordInbound(input: InboundInput): Promise<Event | null> {
+  const outbound = input.direction === "out";
   const [row] = await db
     .insert(events)
     .values({
       conversationId: input.conversationId,
-      direction: "in",
+      direction: input.direction ?? "in",
       externalId: input.externalId,
       author: input.author,
       text: input.text,
       attachments: input.attachments ?? null,
       raw: input.raw ?? null,
-      status: "new",
-      ignored: input.ignored ?? false,
-      ignoredReason: input.ignoredReason ?? null,
+      // inbound → DB default 'received'; outbound echo → terminal 'answered'
+      ...(outbound ? { status: "answered" as const, handledAt: new Date() } : {}),
     })
     .onConflictDoNothing({ target: events.externalId })
     .returning();
@@ -171,7 +172,7 @@ export async function listInbox(opts?: {
   statuses?: Event["status"][];
   limit?: number;
 }): Promise<InboxItem[]> {
-  const statuses = opts?.statuses ?? ["new"];
+  const statuses = opts?.statuses ?? ["triaged"];
   const conds = [
     eq(events.direction, "in"),
     eq(events.ignored, false), // hide echo / our own / replies from the inbox
@@ -225,13 +226,75 @@ export async function setEventStatus(
     .where(eq(events.id, eventId));
 }
 
+// ─── Processor queue (process-events cron) ───────────────────────────────────
+
+export interface ClaimedEvent {
+  id: string;
+  conversationId: string;
+  externalId: string;
+  author: string | null;
+  text: string | null;
+  raw: any;
+  attempts: number;
+}
+
+/** Minutes a `processing` row can sit before it's considered crashed & reclaimed. */
+const STALE_CLAIM_MIN = 10;
+
+/**
+ * Atomically claim up to `limit` queued events for processing. One SQL statement
+ * (works on the neon-http driver, which has no multi-statement transactions):
+ * flips `received` → `processing`, bumps `attempts`, stamps `claimed_at`.
+ * `FOR UPDATE SKIP LOCKED` means two concurrent cron runs never grab the same
+ * row; the stale-`processing` branch reclaims rows a crashed run left behind.
+ */
+export async function claimEvents(limit = 25): Promise<ClaimedEvent[]> {
+  const res: any = await db.execute(sql`
+    UPDATE events SET status = 'processing', attempts = attempts + 1, claimed_at = now()
+    WHERE id IN (
+      SELECT id FROM events
+      WHERE direction = 'in'
+        AND (
+          status = 'received'
+          OR (status = 'processing' AND claimed_at < now() - make_interval(mins => ${STALE_CLAIM_MIN}))
+        )
+      ORDER BY created_at
+      LIMIT ${limit}
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING id, conversation_id AS "conversationId", external_id AS "externalId",
+              author, text, raw, attempts
+  `);
+  return (res.rows ?? res) as ClaimedEvent[];
+}
+
+/** Filtered out by the processor (echo already excluded at ingest via direction). */
+export async function skipEvent(id: string, reason: string): Promise<void> {
+  await db
+    .update(events)
+    .set({ status: "skipped", ignored: true, ignoredReason: reason, handledAt: new Date() })
+    .where(eq(events.id, id));
+}
+
+/** Processing errored: requeue for another attempt, or dead-letter to `failed`. */
+export async function failEvent(id: string, error: string, retry: boolean): Promise<void> {
+  await db
+    .update(events)
+    .set({
+      status: retry ? "received" : "failed",
+      lastError: error.slice(0, 1000),
+      ...(retry ? {} : { handledAt: new Date() }),
+    })
+    .where(eq(events.id, id));
+}
+
 /** Count of unhandled inbox items, for the badge. */
 export async function inboxCount(): Promise<number> {
   const rows = await db
     .select({ id: events.id })
     .from(events)
     .where(
-      and(eq(events.direction, "in"), eq(events.ignored, false), eq(events.status, "new")),
+      and(eq(events.direction, "in"), eq(events.ignored, false), eq(events.status, "triaged")),
     );
   return rows.length;
 }

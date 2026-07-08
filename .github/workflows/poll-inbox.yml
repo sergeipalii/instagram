@@ -1,0 +1,19 @@
+name: poll-inbox
+
+# Polling fallback for the inbox: pulls recent DMs + comments the webhook may
+# have missed. Runs on GitHub Actions instead of Vercel cron (Hobby caps crons
+# at 2 / daily). Needs repo secret CRON_SECRET = the Vercel CRON_SECRET.
+on:
+  schedule:
+    - cron: "*/30 * * * *" # every 30 minutes
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit /api/cron/poll-inbox
+        run: |
+          curl -fsS --max-time 60 -X GET \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            https://inbox.sepia.software/api/cron/poll-inbox

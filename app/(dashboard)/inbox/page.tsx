@@ -5,7 +5,7 @@ import { InboxClient } from "@/components/inbox/InboxClient";
 export const dynamic = "force-dynamic";
 
 export default async function InboxPage() {
-  const initial = await listInbox({ statuses: ["new"] });
+  const initial = await listInbox({ statuses: ["triaged"] });
   return (
     <InboxClient
       initialItems={initial}

@@ -15,11 +15,18 @@ import {
 export const conversationKind = pgEnum("conversation_kind", ["dm", "comment"]);
 export const eventDirection = pgEnum("event_direction", ["in", "out"]);
 export const eventStatus = pgEnum("event_status", [
-  "new", // inbound, not yet handled — this is the inbox
+  // Lifecycle: received → processing → {triaged|auto|answered|hidden|skipped|failed}.
+  // Ingest (webhook/poll) writes `received`; the processor cron claims into
+  // `processing`, then lands a terminal status. The inbox = `triaged`.
+  "new", // legacy (migrated → triaged); kept so the enum isn't narrowed
+  "received", // ingested, awaiting the processor — this is the queue
+  "processing", // claimed by a processor run (in flight)
+  "triaged", // processed, awaiting a human reply — this is the inbox
   "answered", // we replied
-  "skipped", // human dismissed it
-  "auto", // auto-handled (auto_mode or bulk) without manual review
+  "skipped", // filtered/dismissed (echo / own / reply / empty)
+  "auto", // auto-handled (auto_mode) without manual review
   "hidden", // comment hidden via moderation
+  "failed", // dead-letter: processing kept erroring past max attempts
 ]);
 export const commentCategory = pgEnum("comment_category", [
   "question_or_lead",
@@ -89,11 +96,18 @@ export const events = pgTable(
     attachments: jsonb("attachments"),
     category: commentCategory("category"),
     escalation: escalation("escalation").default("none"),
-    status: eventStatus("status").notNull().default("new"),
+    status: eventStatus("status").notNull().default("received"),
     modelUsed: text("model_used"),
     handledAt: timestamp("handled_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     raw: jsonb("raw"),
+    // Processor bookkeeping (see process-events cron): how many times the
+    // processor has claimed this row, when it was last claimed (for stale
+    // reclaim), and the last error if it keeps failing (dead-letter at attempts
+    // ≥ MAX → status `failed`).
+    attempts: integer("attempts").notNull().default(0),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    lastError: text("last_error"),
     // Recorded but excluded from the inbox at read time (echo / our own / reply /
     // empty). Every signature-valid delivery leaves a DB trace; the inbox filters
     // `ignored = false`, so validation + handling are observable without noise.
@@ -104,6 +118,8 @@ export const events = pgTable(
     uniqueIndex("events_external_id").on(t.externalId),
     index("events_inbox").on(t.status, t.direction),
     index("events_conversation").on(t.conversationId),
+    // Processor queue: WHERE direction='in' AND status='received' ORDER BY created_at.
+    index("events_queue").on(t.direction, t.status, t.createdAt),
   ],
 );
 

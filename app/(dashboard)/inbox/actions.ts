@@ -96,13 +96,13 @@ export interface BulkResult {
 }
 
 /**
- * Reply to every `new` item automatically. Guardrails: spam/toxic/prohibited
- * comments are hidden (not replied to); spam/offtopic DMs are skipped; sends
- * are best-effort (a failure — e.g. DM outside the 24h window — counts as error
- * and the item stays new). Caps at 50 items per run.
+ * Reply to every triaged inbox item automatically. Guardrails: spam/toxic/
+ * prohibited comments are hidden (not replied to); spam/offtopic DMs are
+ * skipped; sends are best-effort (a failure — e.g. DM outside the 24h window —
+ * counts as error and the item stays in the inbox). Caps at 50 items per run.
  */
 export async function bulkAutoReply(modelId?: string): Promise<BulkResult> {
-  const items = await listInbox({ statuses: ["new"], limit: 50 });
+  const items = await listInbox({ statuses: ["triaged"], limit: 50 });
   const res: BulkResult = { answered: 0, hidden: 0, skipped: 0, errors: 0 };
 
   for (const { event, conversation } of items) {

@@ -48,23 +48,24 @@ export function InboxClient({
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkResult, setBulkResult] = useState<BulkResult | null>(null);
 
-  const key = `/api/inbox?status=new${filter !== "all" ? `&kind=${filter}` : ""}`;
+  const key = `/api/inbox?status=triaged${filter !== "all" ? `&kind=${filter}` : ""}`;
   const { data, mutate, isLoading } = useSWR<{ items: InboxItemView[] }>(key, fetcher, {
     fallbackData: { items: filter === "all" ? initialItems : initialItems.filter((i) => i.conversation.kind === filter) },
     refreshInterval: 8000,
   });
   const items = data?.items ?? [];
 
+  // Refresh the view from the DB only. Pulling new messages from Instagram is
+  // the poll-inbox cron's job now; this button just re-reads what's already
+  // been ingested + processed.
   async function runSync() {
     setSyncing(true);
     setNotice(null);
     try {
-      const r = await fetch("/api/sync", { method: "POST" }).then((x) => x.json());
-      if (r.ok) setNotice(`Синхронизация: +${r.dms} DM, +${r.comments} комментариев`);
-      else setNotice(`Ошибка sync: ${r.error}`);
-      mutate();
+      const r = await mutate();
+      setNotice(`Обновлено: ${r?.items?.length ?? 0} в инбоксе`);
     } catch (e: any) {
-      setNotice(`Ошибка sync: ${e?.message ?? e}`);
+      setNotice(`Ошибка обновления: ${e?.message ?? e}`);
     } finally {
       setSyncing(false);
     }
@@ -107,7 +108,7 @@ export function InboxClient({
           </Select>
           <Button variant="secondary" size="sm" onClick={runSync} disabled={syncing}>
             <RefreshCw className={cn("h-4 w-4", syncing && "animate-spin")} />
-            Sync
+            Обновить
           </Button>
           <Button variant="ghost" size="icon" onClick={logout} title="Выйти">
             <LogOut className="h-4 w-4" />

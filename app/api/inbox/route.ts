@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const kind = sp.get("kind");
   const statusParam = sp.get("status");
-  const statuses = (statusParam ? statusParam.split(",") : ["new"]) as Event["status"][];
+  const statuses = (statusParam ? statusParam.split(",") : ["triaged"]) as Event["status"][];
 
   const items: InboxItem[] = await listInbox({
     kind: kind === "dm" || kind === "comment" ? kind : undefined,
