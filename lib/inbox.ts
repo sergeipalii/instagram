@@ -87,9 +87,11 @@ export async function upsertConversation(input: ConvoInput): Promise<string> {
       target: [conversations.accountId, conversations.kind, conversations.externalId],
       set: {
         lastActivityAt: new Date(),
-        participantUsername: input.participantUsername,
-        permalink: input.permalink,
-        mediaCaption: input.mediaCaption,
+        // Only overwrite when we actually have a value, so a source that lacks it
+        // (e.g. a webhook DM with no username) can't wipe what the poll stored.
+        ...(input.participantUsername ? { participantUsername: input.participantUsername } : {}),
+        ...(input.permalink ? { permalink: input.permalink } : {}),
+        ...(input.mediaCaption ? { mediaCaption: input.mediaCaption } : {}),
       },
     })
     .returning({ id: conversations.id });

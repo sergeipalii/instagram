@@ -31,8 +31,14 @@ const MAX_MEDIA = 15;
  * for anything a webhook missed — idempotent (ingest dedups by external id), so
  * webhook and poll never double-record. Bounded to MAX_GRAPH_CALLS per run and
  * to recently-active threads/media so it can't blow the rate limit.
+ *
+ * `full: true` — one-off historical backfill: drop the recency windows and raise
+ * the caps to pull ALL conversations/media (e.g. to seed old DMs). Not for the
+ * recurring cron (would risk the rate limit); trigger manually.
  */
-export async function syncInbox(): Promise<SyncResult> {
+export async function syncInbox(opts?: { full?: boolean }): Promise<SyncResult> {
+  const full = opts?.full ?? false;
+  const maxCalls = full ? 200 : MAX_GRAPH_CALLS;
   const uid = env.igUserId();
   const result: SyncResult = { dms: 0, comments: 0, calls: 0, skipped: [], errors: [] };
   const now = Date.now();
@@ -45,12 +51,13 @@ export async function syncInbox(): Promise<SyncResult> {
   try {
     const convos = await getConversations();
     result.calls++;
-    const recent = convos.filter(
-      (c) => !c.updated_time || now - Date.parse(c.updated_time) < CONVO_RECENT_MS,
-    );
+    const recent = full
+      ? convos
+      : convos.filter((c) => !c.updated_time || now - Date.parse(c.updated_time) < CONVO_RECENT_MS);
+    const maxConvos = full ? recent.length : MAX_CONVOS;
     let taken = 0;
     for (const convo of recent) {
-      if (taken >= MAX_CONVOS || result.calls >= MAX_GRAPH_CALLS) {
+      if (taken >= maxConvos || result.calls >= maxCalls) {
         result.skipped.push(`convos:${recent.length - taken}`);
         break;
       }
@@ -64,6 +71,7 @@ export async function syncInbox(): Promise<SyncResult> {
         const saved = await ingestDm(account, {
           senderId: String(m.from?.id ?? participant?.id ?? convo.id),
           recipientId: participant?.id,
+          participantUsername: participant?.username ?? m.from?.username,
           mid: m.id,
           text: m.message,
           raw: m,
@@ -80,11 +88,14 @@ export async function syncInbox(): Promise<SyncResult> {
     const media = await getMediaList();
     result.calls++;
     const recent = media.filter(
-      (m) => m.comments_count && (!m.timestamp || now - Date.parse(m.timestamp) < MEDIA_RECENT_MS),
+      (m) =>
+        m.comments_count &&
+        (full || !m.timestamp || now - Date.parse(m.timestamp) < MEDIA_RECENT_MS),
     );
+    const maxMedia = full ? recent.length : MAX_MEDIA;
     let taken = 0;
     for (const md of recent) {
-      if (taken >= MAX_MEDIA || result.calls >= MAX_GRAPH_CALLS) {
+      if (taken >= maxMedia || result.calls >= maxCalls) {
         result.skipped.push(`media:${recent.length - taken}`);
         break;
       }

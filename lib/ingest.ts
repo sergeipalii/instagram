@@ -12,6 +12,8 @@ import { upsertConversation, recordInbound } from "./inbox";
 export interface DmIngest {
   senderId: string;
   recipientId?: string;
+  /** The other party's @username, when known (the poll has it; the webhook doesn't). */
+  participantUsername?: string;
   mid: string;
   text?: string;
   attachments?: unknown;
@@ -28,6 +30,7 @@ export async function ingestDm(account: Account, m: DmIngest) {
     kind: "dm",
     externalId: participantId,
     participantId,
+    participantUsername: m.participantUsername,
   });
   return recordInbound({
     conversationId,
