@@ -7,9 +7,17 @@ import { sendAlert } from "@/lib/alert";
 export const runtime = "nodejs";
 
 /**
- * Daily follower digest. Vercel Cron hits this (schedule in vercel.json).
- * Reads followers_count, compares to yesterday's stored value, sends the delta
- * to Telegram, and stores today's value. The API gives only the count, not who.
+ * Follower digest — **отключён 2026-08-14 по решению владельца.**
+ *
+ * Расписание убрано из vercel.json, поэтому само оно больше не срабатывает:
+ * ежедневное «Подписчики: N (+K за сутки)» в Telegram прекращено. Роут оставлен
+ * рабочим — его можно дёрнуть руками, если счётчик когда-нибудь понадобится
+ * разово; чтобы вернуть ежедневную отправку, достаточно добавить запись обратно
+ * в crons.
+ *
+ * Что делает: читает followers_count, сравнивает со вчерашним сохранённым
+ * значением, шлёт дельту в Telegram и сохраняет сегодняшнее. API отдаёт только
+ * число, не список.
  */
 export async function GET(req: NextRequest) {
   const secret = env.cronSecret();
